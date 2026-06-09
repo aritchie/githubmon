@@ -1,0 +1,9 @@
+using Octokit;
+
+namespace GitHubMon.Dashboard;
+
+public interface IGitHubClientFactory
+{
+    Task<IGitHubClient?> CreateAsync(string accountId, CancellationToken ct = default);
+    void Invalidate(string accountId);
+}

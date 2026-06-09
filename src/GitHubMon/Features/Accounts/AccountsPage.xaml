@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:acct="clr-namespace:GitHubMon.Accounts"
+             x:Class="GitHubMon.Accounts.AccountsPage"
+             x:DataType="acct:AccountsViewModel"
+             Title="Accounts">
+
+    <Grid RowDefinitions="Auto,*">
+
+        <!-- Header -->
+        <Border Grid.Row="0"
+                StrokeThickness="0"
+                BackgroundColor="{AppThemeBinding Light={StaticResource BgSubtleLight}, Dark={StaticResource BgSubtleDark}}">
+            <Border.StrokeShape>
+                <Rectangle />
+            </Border.StrokeShape>
+            <Grid Padding="24,18" ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                <VerticalStackLayout Grid.Column="0" Spacing="2" VerticalOptions="Center">
+                    <Label Style="{StaticResource DisplayLabel}" Text="Accounts" />
+                    <Label Style="{StaticResource MutedLabel}" Text="Connect GitHub accounts using fine-grained personal access tokens." />
+                </VerticalStackLayout>
+                <Button Grid.Column="1"
+                        Style="{StaticResource PrimaryButton}"
+                        Text="+ Add account"
+                        Command="{Binding AddCommand}"
+                        VerticalOptions="Center" />
+            </Grid>
+        </Border>
+
+        <!-- List / empty state -->
+        <ScrollView Grid.Row="1">
+            <VerticalStackLayout Padding="24" Spacing="12">
+
+                <!-- BindableLayout instead of CollectionView so the per-row Edit/Delete
+                     Buttons actually receive input on labs MacOS. Empty state shown
+                     when no accounts via IsVisible on the empty card and the list. -->
+                <Border Style="{StaticResource Card}" Padding="32"
+                        IsVisible="{Binding Accounts.Count, Converter={StaticResource InvertedBoolConverter}}">
+                    <VerticalStackLayout Spacing="12" HorizontalOptions="Center">
+                        <Label Style="{StaticResource TitleLabel}" Text="No accounts yet" HorizontalTextAlignment="Center" />
+                        <Label Style="{StaticResource MutedLabel}"
+                               Text="Create a fine-grained personal access token at github.com/settings/personal-access-tokens then add it here."
+                               HorizontalTextAlignment="Center"
+                               MaximumWidthRequest="480" />
+                        <Button Style="{StaticResource PrimaryButton}"
+                                Text="+ Add your first account"
+                                Command="{Binding AddCommand}"
+                                HorizontalOptions="Center"
+                                Margin="0,8,0,0" />
+                    </VerticalStackLayout>
+                </Border>
+
+                <VerticalStackLayout BindableLayout.ItemsSource="{Binding Accounts}" Spacing="8">
+                    <BindableLayout.ItemTemplate>
+                        <DataTemplate x:DataType="acct:MonitoredAccount">
+                            <Border Style="{StaticResource Card}">
+                                <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="12">
+                                    <VerticalStackLayout Grid.Column="0" Spacing="2" VerticalOptions="Center">
+                                        <Label Style="{StaticResource TitleLabel}" Text="{Binding Label}" FontSize="15" />
+                                        <Label Style="{StaticResource MutedLabel}" Text="{Binding Username, StringFormat='@{0}'}" />
+                                        <Label Style="{StaticResource MutedLabel}" Text="{Binding Repos.Count, StringFormat='{}{0} repo(s) monitored'}" />
+                                    </VerticalStackLayout>
+                                    <Button Grid.Column="1"
+                                            Style="{StaticResource GhostButton}"
+                                            Text="Edit"
+                                            Command="{Binding Source={RelativeSource AncestorType={x:Type acct:AccountsViewModel}}, Path=EditCommand}"
+                                            CommandParameter="{Binding}"
+                                            VerticalOptions="Center" />
+                                    <Button Grid.Column="2"
+                                            Style="{StaticResource DangerButton}"
+                                            Text="Delete"
+                                            Command="{Binding Source={RelativeSource AncestorType={x:Type acct:AccountsViewModel}}, Path=DeleteCommand}"
+                                            CommandParameter="{Binding}"
+                                            VerticalOptions="Center" />
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </BindableLayout.ItemTemplate>
+                </VerticalStackLayout>
+
+            </VerticalStackLayout>
+        </ScrollView>
+    </Grid>
+</ContentPage>
