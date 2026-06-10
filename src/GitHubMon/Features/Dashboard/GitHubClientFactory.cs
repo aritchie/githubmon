@@ -1,8 +1,10 @@
 using System.Collections.Concurrent;
 using Octokit;
+using Shiny;
 
 namespace GitHubMon.Dashboard;
 
+[Singleton]
 public sealed class GitHubClientFactory(ITokenVault vault) : IGitHubClientFactory
 {
     static readonly ProductHeaderValue Product = new("GitHubMon", "1.0");
@@ -26,4 +28,6 @@ public sealed class GitHubClientFactory(ITokenVault vault) : IGitHubClientFactor
     }
 
     public void Invalidate(string accountId) => cache.TryRemove(accountId, out _);
+
+    public void InvalidateAll() => cache.Clear();
 }

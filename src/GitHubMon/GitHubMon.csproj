@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk.Razor">
 
 	<PropertyGroup>
 		<TargetFramework Condition="$([MSBuild]::IsOSPlatform('osx'))">net10.0-macos</TargetFramework>
@@ -11,8 +11,6 @@
 		<SingleProject>true</SingleProject>
 		<ImplicitUsings>enable</ImplicitUsings>
 		<Nullable>enable</Nullable>
-
-		<MauiXamlInflator>SourceGen</MauiXamlInflator>
 
 		<ApplicationTitle>GitHubMon</ApplicationTitle>
 		<ApplicationId>net.shiny.githubmon</ApplicationId>
@@ -42,20 +40,14 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<MauiIcon Include="Resources\AppIcon\appicon.svg" ForegroundFile="Resources\AppIcon\appiconfg.svg" Color="#0D1117" />
+		<!-- appicon.svg is fully composed (background + artwork + macOS margins);
+		     no ForegroundFile, since the labs macOS icon task only renders the base. -->
+		<MauiIcon Include="Resources\AppIcon\appicon.svg" />
 		<MauiSplashScreen Include="Resources\Splash\splash.svg" Color="#24292F" BaseSize="128,128" />
 		<MauiImage Include="Resources\Images\*" />
 		<MauiImage Update="Resources\Images\dotnet_bot.png" Resize="True" BaseSize="300,185" />
 		<MauiFont Include="Resources\Fonts\*" />
 		<MauiAsset Include="Resources\Raw\**" LogicalName="%(RecursiveDir)%(Filename)%(Extension)" />
-	</ItemGroup>
-
-	<ItemGroup>
-		<!-- Shiny.Maui.Controls 1.0.1-beta-0101 / Shiny.Maui.Shell 6.2.0 have no -macos or -linux TFM
-		     variants; the SourceGen XAML compiler analyzes the net10.0 fallback assembly which can't
-		     resolve PillView.Type / ShinyShell. Fall back to runtime XAML inflation for those pages. -->
-		<MauiXaml Update="Features\Dashboard\DashboardPage.xaml" Inflator="Runtime" />
-		<MauiXaml Update="AppShell.xaml" Inflator="Runtime" />
 	</ItemGroup>
 
 	<!-- Stock MAUI SingleProject only auto-routes iOS, MacCatalyst, Android, Windows, Tizen.
@@ -73,33 +65,39 @@
 
 	<ItemGroup>
 		<PackageReference Include="Microsoft.Maui.Controls" />
+		<PackageReference Include="Microsoft.AspNetCore.Components.WebView.Maui" />
 		<PackageReference Include="Microsoft.Extensions.Logging.Debug" />
+		<PackageReference Include="Microsoft.Extensions.Logging.Console" />
 
 		<PackageReference Include="Shiny.Mediator.Maui" />
 		<PackageReference Include="Shiny.Notifications" />
-		<PackageReference Include="Shiny.Maui.Controls" />
+		<PackageReference Include="Shiny.Blazor.Controls" />
 		<PackageReference Include="Shiny.Maui.Controls.Desktop" />
-		<PackageReference Include="Shiny.Maui.Shell" />
 		<PackageReference Include="Shiny.DocumentDb.Sqlite" />
+		<PackageReference Include="Shiny.DocumentDb.Extensions.DependencyInjection" />
 		<PackageReference Include="Shiny.Extensions.Stores" />
+		<PackageReference Include="Shiny.Extensions.DependencyInjection" />
 
 		<PackageReference Include="Octokit" />
-		<PackageReference Include="CommunityToolkit.Mvvm" />
 	</ItemGroup>
 
-	<!-- Native macOS (AppKit) via dotnet/maui-labs -->
+	<!-- Native macOS (AppKit) via maui-labs: Platform.Maui.MacOS 0.3.x (renamed from
+	     Microsoft.Maui.Platforms.MacOS). BlazorWebView ships as its own package with a
+	     macOS-specific control (MacOSBlazorWebView). -->
 	<ItemGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'macos'">
-		<PackageReference Include="Microsoft.Maui.Platforms.MacOS" />
-		<PackageReference Include="Microsoft.Maui.Platforms.MacOS.Essentials" />
+		<PackageReference Include="Platform.Maui.MacOS" />
+		<PackageReference Include="Platform.Maui.MacOS.Essentials" />
+		<PackageReference Include="Platform.Maui.MacOS.BlazorWebView" />
 	</ItemGroup>
 
-	<!-- Linux (GTK4) via dotnet/maui-labs.
+	<!-- Linux (GTK4) via maui-labs.
 	     Linux uses the bare net10.0 TFM (no -linux identifier), and that TFM is also built as
 	     a fallback DLL on macOS/Windows, so gate both the packages AND the LINUX define on
 	     IsOSPlatform('linux') to avoid pulling GTK refs into the non-runtime fallback. -->
 	<ItemGroup Condition="'$(TargetFramework)' == 'net10.0' AND $([MSBuild]::IsOSPlatform('linux'))">
 		<PackageReference Include="Platform.Maui.Linux.Gtk4" />
 		<PackageReference Include="Platform.Maui.Linux.Gtk4.Essentials" />
+		<PackageReference Include="Platform.Maui.Linux.Gtk4.BlazorWebView" />
 		<PackageReference Include="Shiny.Notifications.Linux" />
 	</ItemGroup>
 	<PropertyGroup Condition="'$(TargetFramework)' == 'net10.0' AND $([MSBuild]::IsOSPlatform('linux'))">

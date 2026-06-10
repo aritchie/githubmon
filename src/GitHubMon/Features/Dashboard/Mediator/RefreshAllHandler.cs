@@ -16,11 +16,25 @@ public sealed class RefreshAllHandler(IConfigStore config, SnapshotCache cache, 
                 try
                 {
                     var snap = await context.Request(new GetRepoSnapshotRequest(account, repo), cancellationToken).ConfigureAwait(false);
-                    cache.PutSnapshot(snap);
+                    var prev = cache.PutSnapshot(snap);
                     await context.Publish(new SnapshotUpdatedEvent(account.Id, repo, snap), cancellationToken: cancellationToken).ConfigureAwait(false);
 
                     foreach (var run in await cache.NewlyFailedRunsAsync(snap, cancellationToken).ConfigureAwait(false))
                         await context.Publish(new WorkflowRunFailedEvent(account.Id, repo, run), cancellationToken: cancellationToken).ConfigureAwait(false);
+
+                    // New issue/PR detection diffs against the previous in-memory
+                    // snapshot — null right after launch, so a restart never
+                    // re-notifies about everything that's already open.
+                    if (prev is not null && !prev.HasError && !snap.HasError)
+                    {
+                        var knownPrs = prev.OpenPullRequests.Select(p => p.Number).ToHashSet();
+                        foreach (var pr in snap.OpenPullRequests.Where(p => !knownPrs.Contains(p.Number)))
+                            await context.Publish(new NewPullRequestEvent(account.Id, repo, pr), cancellationToken: cancellationToken).ConfigureAwait(false);
+
+                        var newIssues = snap.OpenIssues - prev.OpenIssues;
+                        if (newIssues > 0)
+                            await context.Publish(new NewIssuesEvent(account.Id, repo, newIssues, snap.OpenIssues), cancellationToken: cancellationToken).ConfigureAwait(false);
+                    }
                 }
                 catch (Exception ex)
                 {

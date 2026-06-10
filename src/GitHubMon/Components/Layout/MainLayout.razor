@@ -1,0 +1,15 @@
+@inherits LayoutComponentBase
+
+<div class="topbar">
+    <span class="brand">GitHubMon</span>
+    <nav>
+        <NavLink href="/" Match="NavLinkMatch.All">Dashboard</NavLink>
+        <NavLink href="/accounts">Accounts</NavLink>
+    </nav>
+</div>
+
+<main>
+    @Body
+</main>
+
+<ToastHost />

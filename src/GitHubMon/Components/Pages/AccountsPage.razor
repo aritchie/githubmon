@@ -1,0 +1,124 @@
+@page "/accounts"
+@implements IDisposable
+@inject IConfigStore Config
+@inject NavigationManager Nav
+@inject IToastService Toast
+@inject IDatabaseBackup Backup
+@inject IFileDialogs FileDialogs
+
+<div class="page narrow">
+    <div class="page-header">
+        <div>
+            <h1>Accounts</h1>
+            <span class="subtitle">Connect GitHub accounts using fine-grained personal access tokens.</span>
+        </div>
+        <span class="spacer"></span>
+        <button class="btn" title="Back up the database — accounts, repos, tokens and card order"
+                @onclick="BackupAsync">Backup</button>
+        <button class="btn" title="Restore accounts, repos, tokens and card order from a backup file"
+                @onclick="RestoreAsync">Restore</button>
+        <button class="btn primary" @onclick="@(() => Nav.NavigateTo("/accounts/edit"))">+ Add account</button>
+    </div>
+
+    @if (accounts.Count == 0)
+    {
+        <div class="card empty-state">
+            <h2>No accounts yet</h2>
+            <p>Create a fine-grained personal access token at github.com/settings/personal-access-tokens then add it here.</p>
+            <button class="btn primary" @onclick="@(() => Nav.NavigateTo("/accounts/edit"))">+ Add your first account</button>
+        </div>
+    }
+    else
+    {
+        @foreach (var account in accounts)
+        {
+            <div class="card account-row" @key="account.Id">
+                <div class="account-body">
+                    <div><strong>@account.Label</strong></div>
+                    @if (account.Username is not null)
+                    {
+                        <div class="meta">@@@account.Username</div>
+                    }
+                    <div class="meta">@account.Repos.Count repo@(account.Repos.Count == 1 ? "" : "s") monitored</div>
+                </div>
+                <button class="btn" @onclick="@(() => Nav.NavigateTo($"/accounts/edit/{account.Id}"))">Edit</button>
+                @if (pendingDeleteId == account.Id)
+                {
+                    <button class="btn danger" @onclick="() => DeleteAsync(account)">Confirm delete</button>
+                    <button class="btn" @onclick="() => pendingDeleteId = null">Cancel</button>
+                }
+                else
+                {
+                    <button class="btn danger" @onclick="() => pendingDeleteId = account.Id">Delete</button>
+                }
+            </div>
+        }
+    }
+</div>
+
+@code {
+    readonly List<MonitoredAccount> accounts = new();
+    string? pendingDeleteId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Config.Changed += OnConfigChanged;
+        await Config.ReloadAsync();
+        Reload();
+    }
+
+    void Reload()
+    {
+        accounts.Clear();
+        accounts.AddRange(Config.Accounts);
+    }
+
+    void OnConfigChanged(object? sender, EventArgs e)
+        => _ = InvokeAsync(() =>
+        {
+            Reload();
+            StateHasChanged();
+        });
+
+    async Task DeleteAsync(MonitoredAccount account)
+    {
+        pendingDeleteId = null;
+        await Config.RemoveAccountAsync(account.Id);
+        await Toast.SuccessAsync($"Removed {account.Label}");
+    }
+
+    async Task BackupAsync()
+    {
+        try
+        {
+            var path = await FileDialogs.PickSavePathAsync($"githubmon-backup-{DateTime.Now:yyyyMMdd}.db");
+            if (path is null)
+                return;
+            await Backup.BackupToAsync(path);
+            await Toast.SuccessAsync($"Backed up to {path} — contains your tokens, keep it private");
+        }
+        catch (Exception ex)
+        {
+            await Toast.DangerAsync($"Backup failed: {ex.Message}");
+        }
+    }
+
+    async Task RestoreAsync()
+    {
+        try
+        {
+            var path = await FileDialogs.PickOpenPathAsync();
+            if (path is null)
+                return;
+            var rows = await Backup.RestoreFromAsync(path);
+            await Toast.SuccessAsync($"Restored {rows} record(s) — accounts, tokens and card order included");
+        }
+        catch (Exception ex)
+        {
+            await Toast.DangerAsync($"Restore failed: {ex.Message}");
+        }
+    }
+
+    public void Dispose()
+        => Config.Changed -= OnConfigChanged;
+}

@@ -11,19 +11,20 @@ namespace GitHubMon.Accounts;
 // has a working implementation on these platforms.
 public sealed record StoredToken(string Id, string Token);
 
+[Shiny.Singleton]
 public sealed class SecureTokenVault(IDocumentStore store) : ITokenVault
 {
     public async Task<string?> GetTokenAsync(string accountId, CancellationToken ct = default)
     {
         var tokens = await store
-            .Query(AccountsJsonContext.Default.StoredToken)
+            .Query<StoredToken>()
             .ToList(ct)
             .ConfigureAwait(false);
         return tokens.FirstOrDefault(t => t.Id == accountId)?.Token;
     }
 
     public Task SetTokenAsync(string accountId, string token, CancellationToken ct = default)
-        => store.Upsert(new StoredToken(accountId, token), AccountsJsonContext.Default.StoredToken, ct);
+        => store.Upsert(new StoredToken(accountId, token), cancellationToken: ct);
 
     public Task DeleteTokenAsync(string accountId, CancellationToken ct = default)
         => store.Remove<StoredToken>(accountId, ct);

@@ -1,15 +1,16 @@
 using System.Text.Json;
-using System.Text.Json.Serialization.Metadata;
 using Microsoft.Extensions.Logging;
 using Shiny;
+using Shiny.Blazor.Controls.Toast;
 using Shiny.DocumentDb;
 using Shiny.DocumentDb.Sqlite;
 using Shiny.Mediator;
 #if MACOS
-using Microsoft.Maui.Platforms.MacOS.Essentials;
-using Microsoft.Maui.Platforms.MacOS.Hosting;
+using Microsoft.Maui.Essentials.MacOS;
+using Microsoft.Maui.Platform.MacOS.Hosting;
 #endif
 #if LINUX
+using Platform.Maui.Linux.Gtk4.BlazorWebView;
 using Platform.Maui.Linux.Gtk4.Essentials;
 using Platform.Maui.Linux.Gtk4.Hosting;
 #endif
@@ -25,20 +26,32 @@ public static class MauiProgram
 #if MACOS
             .UseMauiAppMacOS<App>()
             .AddMacOSEssentials()
+            .AddMacOSBlazorWebView()
 #elif LINUX
             .UseMauiAppLinuxGtk4<App>()
             .AddLinuxGtk4Essentials()
 #else
             .UseMauiApp<App>()
 #endif
-            .UseShinyControls()
             .UseTrayIcon()
-            .UseShinyShell(x => x.AddGeneratedMaps())
             .ConfigureFonts(fonts =>
             {
                 fonts.AddFont("OpenSans-Regular.ttf", "OpenSansRegular");
                 fonts.AddFont("OpenSans-Semibold.ttf", "OpenSansSemibold");
             });
+
+#if MACOS
+        // Platform.Maui.MacOS.BlazorWebView's AddMacOSBlazorWebView only registers the
+        // handler — the core Blazor services (NavigationManager, IJSRuntime, ...) still
+        // need to be registered or AttachToPage fails at runtime.
+        builder.Services.AddBlazorWebView();
+#else
+        builder.Services.AddMauiBlazorWebView();
+#endif
+#if LINUX
+        builder.Services.AddLinuxGtk4BlazorWebView();
+#endif
+        builder.Services.AddShinyToast();
 
         builder.Services.AddNotifications();
 
@@ -49,43 +62,40 @@ public static class MauiProgram
             .PreventEventExceptions()
         );
 
-        builder.Services.AddSingleton<IDocumentStore>(_ =>
+        // The single GitHubMonJsonContext is wired here ONCE — IDocumentStore call
+        // sites resolve type info from it and never pass JsonTypeInfo themselves.
+        builder.Services.AddDocumentStore(options =>
         {
-            var appData = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "GitHubMon");
-            Directory.CreateDirectory(appData);
-            var dbPath = Path.Combine(appData, "githubmon.db");
-            var options = new DocumentStoreOptions
+            Directory.CreateDirectory(AppPaths.DataDirectory);
+            options.DatabaseProvider = new SqliteDatabaseProvider($"Data Source={AppPaths.DatabasePath}");
+            options.JsonSerializerOptions = new JsonSerializerOptions
             {
-                DatabaseProvider = new SqliteDatabaseProvider($"Data Source={dbPath}"),
-                JsonSerializerOptions = new JsonSerializerOptions
-                {
-                    TypeInfoResolver = JsonTypeInfoResolver.Combine(
-                        AccountsJsonContext.Default,
-                        DashboardJsonContext.Default)
-                }
+                TypeInfoResolver = GitHubMonJsonContext.Default
             };
             options.MapTypeToTable<MonitoredAccount>();
             options.MapTypeToTable<StoredToken>();
             options.MapTypeToTable<SeenFailedRun>();
             options.MapTypeToTable<SeenInboxItem>();
-            return new SqliteDocumentStore(options);
+            options.MapTypeToTable<DashboardPrefs>();
         });
 
-        builder.Services.AddSingleton<ITokenVault, SecureTokenVault>();
-        builder.Services.AddSingleton<IConfigStore, ConfigStore>();
-        builder.Services.AddSingleton<IGitHubClientFactory, GitHubClientFactory>();
-        builder.Services.AddSingleton<SnapshotCache>();
+        // [Singleton]-attributed services (ConfigStore, SecureTokenVault,
+        // GitHubClientFactory, SnapshotCache) via the Shiny DI source generator.
+        builder.Services.AddGeneratedServices();
 
-        builder.Services.AddSingleton<TrayIconHost>();
-        builder.Services.AddSingleton<IMauiInitializeService>(sp => sp.GetRequiredService<TrayIconHost>());
+        builder.Services.AddSingletonAsImplementedInterfaces<TrayIconHost>();
+        builder.Services.AddSingletonAsImplementedInterfaces<PollerInitializer>();
 
-        builder.Services.AddSingleton<PollerInitializer>();
-        builder.Services.AddSingleton<IMauiInitializeService>(sp => sp.GetRequiredService<PollerInitializer>());
+#if MACOS
+        builder.Services.AddSingleton<IFileDialogs, Platforms.MacOS.MacFileDialogs>();
+#else
+        builder.Services.AddSingleton<IFileDialogs, DownloadsFolderFileDialogs>();
+#endif
 
 #if DEBUG
         builder.Logging.AddDebug();
+        builder.Logging.AddConsole();
+        builder.Logging.SetMinimumLevel(LogLevel.Debug);
 #endif
 
         var app = builder.Build();

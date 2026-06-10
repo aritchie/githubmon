@@ -1,6 +1,9 @@
 <Project>
 
   <PropertyGroup>
+    <!-- Platform.Maui.MacOS 0.3.0 requires Microsoft.Maui.Controls >= 10.0.31; the maui
+         workload's default MauiVersion (10.0.20) is below that, so pin newer here. -->
+    <MauiVersion>10.0.70</MauiVersion>
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
     <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
     <LangVersion>latest</LangVersion>

@@ -15,4 +15,8 @@ public interface IConfigStore
 
     Task<bool> GetNotificationsMutedAsync();
     Task SetNotificationsMutedAsync(bool muted);
+
+    /// <summary>Dashboard card order as "accountId|owner/name" keys. Empty = natural (account/repo) order.</summary>
+    Task<IReadOnlyList<string>> GetRepoOrderAsync();
+    Task SetRepoOrderAsync(IReadOnlyList<string> orderedKeys);
 }

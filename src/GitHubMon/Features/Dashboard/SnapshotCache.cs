@@ -1,8 +1,10 @@
 using System.Collections.Concurrent;
+using Shiny;
 using Shiny.DocumentDb;
 
 namespace GitHubMon.Dashboard;
 
+[Singleton(AsSelf = true)]
 public sealed class SnapshotCache(IDocumentStore store)
 {
     readonly ConcurrentDictionary<string, RepoSnapshot> snapshots = new();
@@ -28,9 +30,9 @@ public sealed class SnapshotCache(IDocumentStore store)
         {
             if (!run.IsFailed) continue;
             var id = FailedRunId(snap.AccountId, snap.Repo, run.Id);
-            var existing = await store.Get(id, DashboardJsonContext.Default.SeenFailedRun, ct).ConfigureAwait(false);
+            var existing = await store.Get<SeenFailedRun>(id, cancellationToken: ct).ConfigureAwait(false);
             if (existing is not null) continue;
-            await store.Insert(new SeenFailedRun(id, now), DashboardJsonContext.Default.SeenFailedRun, ct).ConfigureAwait(false);
+            await store.Insert(new SeenFailedRun(id, now), cancellationToken: ct).ConfigureAwait(false);
             fresh.Add(run);
         }
         return fresh;
@@ -43,9 +45,9 @@ public sealed class SnapshotCache(IDocumentStore store)
         foreach (var item in items)
         {
             var id = InboxItemId(accountId, item.ThreadId);
-            var existing = await store.Get(id, DashboardJsonContext.Default.SeenInboxItem, ct).ConfigureAwait(false);
+            var existing = await store.Get<SeenInboxItem>(id, cancellationToken: ct).ConfigureAwait(false);
             if (existing is not null) continue;
-            await store.Insert(new SeenInboxItem(id, now), DashboardJsonContext.Default.SeenInboxItem, ct).ConfigureAwait(false);
+            await store.Insert(new SeenInboxItem(id, now), cancellationToken: ct).ConfigureAwait(false);
             fresh.Add(item);
         }
         return fresh;

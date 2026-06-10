@@ -53,11 +53,7 @@ public sealed class TrayIconHost(ITrayIconFactory factory,
     }
 
     static void ShowMainWindow()
-    {
-        var window = Application.Current?.Windows?.FirstOrDefault();
-        if (window is not null)
-            Application.Current!.ActivateWindow(window);
-    }
+        => MainWindowLauncher.ShowOrCreate();
 
     static Stream OpenIconStream(string name)
     {

@@ -1,10 +1,8 @@
-using CommunityToolkit.Mvvm.ComponentModel;
-
 namespace GitHubMon.Accounts;
 
-public sealed partial class RepoSelection : ObservableObject
+public sealed class RepoSelection
 {
-    [ObservableProperty] bool isSelected;
+    public bool IsSelected { get; set; }
 
     public required string Owner { get; init; }
     public required string Name { get; init; }

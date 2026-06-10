@@ -1,5 +1,27 @@
 <?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Full composed icon: GitHub canvas-dark squircle + monitor/heartbeat artwork.
+     The squircle is inset ~10% per macOS Dock guidelines (content grid = 824/1024)
+     with corner radius = 22.37% of the tile, so it sits naturally beside other
+     Dock icons instead of rendering as an oversized full-bleed slab. -->
 <svg width="456" height="456" viewBox="0 0 456 456" xmlns="http://www.w3.org/2000/svg">
-    <!-- GitHub canvas-dark rounded square -->
-    <rect x="0" y="0" width="456" height="456" rx="88" ry="88" fill="#0D1117"/>
+    <rect x="44" y="44" width="368" height="368" rx="82" ry="82" fill="#0D1117"/>
+    <g transform="translate(44,44) scale(0.807)">
+        <!-- Repo/monitor frame -->
+        <rect x="84" y="118" width="288" height="200" rx="22" ry="22"
+              fill="none" stroke="#E6EDF3" stroke-width="14"/>
+        <!-- header dots (traffic-light style) -->
+        <circle cx="112" cy="148" r="6" fill="#F85149"/>
+        <circle cx="134" cy="148" r="6" fill="#D29922"/>
+        <circle cx="156" cy="148" r="6" fill="#3FB950"/>
+        <line x1="84" y1="174" x2="372" y2="174" stroke="#30363D" stroke-width="6"/>
+
+        <!-- pulse / heartbeat waveform across the monitor -->
+        <polyline points="104,250 156,250 178,210 206,290 232,168 258,290 286,238 320,238 352,250"
+                  fill="none" stroke="#2F81F7" stroke-width="16"
+                  stroke-linecap="round" stroke-linejoin="round"/>
+
+        <!-- live status dot bottom-right with halo -->
+        <circle cx="352" cy="354" r="22" fill="#3FB950"/>
+        <circle cx="352" cy="354" r="36" fill="none" stroke="#3FB950" stroke-width="4" opacity="0.45"/>
+    </g>
 </svg>

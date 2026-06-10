@@ -1,0 +1,267 @@
+@page "/"
+@implements IDisposable
+@inject IMediator Mediator
+@inject IConfigStore Config
+@inject SnapshotCache Cache
+@inject NavigationManager Nav
+@inject IExternalBrowser Browser
+
+<div class="page">
+    <div class="page-header">
+        <h1>Dashboard</h1>
+        @if (statusText is not null)
+        {
+            <span class="subtitle">@statusText</span>
+        }
+        <span class="spacer"></span>
+        <label class="switch">
+            <input type="checkbox" checked="@muted" @onchange="OnMuteChanged" />
+            <span class="track"></span>
+            Mute notifications
+        </label>
+        <button class="btn" @onclick="RefreshAsync" disabled="@isBusy">
+            @if (isBusy)
+            {
+                <span class="spinner"></span>
+            }
+            Refresh
+        </button>
+        <button class="btn primary" @onclick="@(() => Nav.NavigateTo("/accounts/edit"))">+ Add account</button>
+    </div>
+
+    @if (cards.Count == 0)
+    {
+        <div class="card empty-state">
+            <h2>No accounts connected yet</h2>
+            <p>Add a GitHub account with a fine-grained personal access token to start monitoring your repos.</p>
+            <button class="btn primary" @onclick="@(() => Nav.NavigateTo("/accounts/edit"))">+ Add your first GitHub account</button>
+        </div>
+    }
+    else
+    {
+        @if (inbox.Count > 0)
+        {
+            <div class="card" style="margin-bottom: 20px;">
+                <div class="page-header" style="margin-bottom: 10px;">
+                    <h2>Needs your attention</h2>
+                    <span class="spacer"></span>
+                    <span class="muted">@inbox.Count item@(inbox.Count == 1 ? "" : "s")</span>
+                </div>
+                <div class="inbox-list">
+                    @foreach (var item in inbox)
+                    {
+                        <div class="inbox-row">
+                            <Pill Text="@item.Reason.ToString()" Type="PillType.Info" />
+                            <div class="inbox-body">
+                                <div class="inbox-title">@item.Title</div>
+                                <div class="inbox-repo">@item.RepoFullName</div>
+                            </div>
+                            <time>@item.UpdatedAt.LocalDateTime.ToString("t")</time>
+                        </div>
+                    }
+                </div>
+            </div>
+        }
+
+        <div class="section-title">Repositories <span class="muted" style="text-transform:none;font-weight:400;">— drag cards (or use ‹ ›) to reorder</span></div>
+        <div class="repo-grid">
+            @foreach (var card in cards)
+            {
+                <div class="card repo-card @(dragKey == card.Key ? "dragging" : "")"
+                     @key="card.Key"
+                     draggable="true"
+                     @ondragstart="() => dragKey = card.Key"
+                     @ondragend="() => dragKey = null"
+                     @ondragenter:preventDefault
+                     @ondragover:preventDefault
+                     @ondrop="() => OnDropOnAsync(card)">
+                    <div class="repo-card-head">
+                        <div style="min-width:0;">
+                            <div class="repo-name">@card.Title</div>
+                            <div class="account-label">@card.AccountLabel</div>
+                        </div>
+                        <span class="move-buttons">
+                            <button class="move-btn" title="Move earlier" disabled="@(cards.IndexOf(card) == 0)"
+                                    @onclick="() => MoveCardAsync(card, -1)">‹</button>
+                            <button class="move-btn" title="Move later" disabled="@(cards.IndexOf(card) == cards.Count - 1)"
+                                    @onclick="() => MoveCardAsync(card, +1)">›</button>
+                        </span>
+                    </div>
+                    <div class="pills">
+                        <span class="pill-link" title="Open issues on GitHub"
+                              @onclick="() => Browser.Open(card.IssuesUrl)">
+                            <Pill Text="@($"Issues {card.OpenIssues}")" Type="PillType.Info" />
+                        </span>
+                        <span class="pill-link" title="Open pull requests on GitHub"
+                              @onclick="() => Browser.Open(card.PullsUrl)">
+                            <Pill Text="@($"PRs {card.OpenPullRequests}")" Type="PillType.Info" />
+                        </span>
+                    </div>
+                    @if (card.LatestRunStatus is not null)
+                    {
+                        <div class="pills">
+                            <span class="pill-link" title="Open this workflow run on GitHub"
+                                  @onclick="() => Browser.Open(card.LatestRunUrl ?? card.ActionsUrl)">
+                                <Pill Text="@card.LatestRunStatus" Type="card.LatestRunPillType" />
+                                <span class="run-desc">@card.LatestRunDescription</span>
+                            </span>
+                        </div>
+                    }
+                    @if (card.HasError)
+                    {
+                        <div class="error">@card.ErrorMessage</div>
+                    }
+                </div>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    readonly List<RepoCardModel> cards = new();
+    readonly List<InboxItem> inbox = new();
+    readonly List<IDisposable> subs = new();
+
+    bool isBusy;
+    bool muted;
+    string? statusText;
+    string? dragKey;
+    List<string> savedOrder = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        subs.Add(Mediator.Subscribe<SnapshotUpdatedEvent>(OnSnapshotUpdated));
+        subs.Add(Mediator.Subscribe<InboxUpdatedEvent>(OnInboxUpdated));
+        Config.Changed += OnConfigChanged;
+
+        savedOrder = (await Config.GetRepoOrderAsync()).ToList();
+        await Config.ReloadAsync();
+        muted = await Config.GetNotificationsMutedAsync();
+        RebuildCards();
+    }
+
+    void RebuildCards()
+    {
+        var existing = cards.ToDictionary(c => c.Key);
+        cards.Clear();
+
+        var desired = Config.Accounts
+            .SelectMany(a => a.Repos.Select(r => (Account: a, Repo: r)))
+            .OrderBy(d =>
+            {
+                var i = savedOrder.IndexOf($"{d.Account.Id}|{d.Repo.FullName}");
+                return i < 0 ? int.MaxValue : i;
+            })
+            .ToList();
+
+        foreach (var (account, repo) in desired)
+        {
+            var key = $"{account.Id}|{repo.FullName}";
+            if (!existing.TryGetValue(key, out var card))
+            {
+                card = new RepoCardModel(account, repo);
+                var snap = Cache.TryGet(account.Id, repo);
+                if (snap is not null)
+                    card.Apply(snap);
+            }
+            cards.Add(card);
+        }
+
+        statusText = cards.Count == 0
+            ? null
+            : $"{cards.Count} repo{(cards.Count == 1 ? "" : "s")} monitored";
+    }
+
+    async Task OnDropOnAsync(RepoCardModel target)
+    {
+        if (dragKey is null || dragKey == target.Key)
+            return;
+        var dragged = cards.FirstOrDefault(c => c.Key == dragKey);
+        dragKey = null;
+        if (dragged is null)
+            return;
+
+        var from = cards.IndexOf(dragged);
+        var to = cards.IndexOf(target);
+        cards.RemoveAt(from);
+        cards.Insert(to, dragged);
+        await PersistOrderAsync();
+    }
+
+    async Task MoveCardAsync(RepoCardModel card, int delta)
+    {
+        var from = cards.IndexOf(card);
+        var to = from + delta;
+        if (from < 0 || to < 0 || to >= cards.Count)
+            return;
+        cards.RemoveAt(from);
+        cards.Insert(to, card);
+        await PersistOrderAsync();
+    }
+
+    Task PersistOrderAsync()
+    {
+        savedOrder = cards.Select(c => c.Key).ToList();
+        return Config.SetRepoOrderAsync(savedOrder);
+    }
+
+    void OnConfigChanged(object? sender, EventArgs e)
+        => _ = InvokeAsync(() =>
+        {
+            RebuildCards();
+            StateHasChanged();
+        });
+
+    Task OnSnapshotUpdated(SnapshotUpdatedEvent e, IMediatorContext _, CancellationToken __)
+        => InvokeAsync(() =>
+        {
+            var key = $"{e.AccountId}|{e.Repo.FullName}";
+            var card = cards.FirstOrDefault(c => c.Key == key);
+            if (card is null)
+                return;
+            card.Apply(e.Snapshot);
+            StateHasChanged();
+        });
+
+    Task OnInboxUpdated(InboxUpdatedEvent e, IMediatorContext _, CancellationToken __)
+        => InvokeAsync(() =>
+        {
+            var merged = inbox
+                .Where(i => i.AccountId != e.AccountId)
+                .Concat(e.Items)
+                .Where(i => i.Reason is InboxReason.Mention or InboxReason.Assigned or InboxReason.ReviewRequested)
+                .OrderByDescending(i => i.UpdatedAt)
+                .ToList();
+            inbox.Clear();
+            inbox.AddRange(merged);
+            StateHasChanged();
+        });
+
+    async Task OnMuteChanged(ChangeEventArgs e)
+    {
+        muted = (bool)e.Value!;
+        await Config.SetNotificationsMutedAsync(muted);
+    }
+
+    async Task RefreshAsync()
+    {
+        if (isBusy)
+            return;
+        isBusy = true;
+        try
+        {
+            await Mediator.Send(new RefreshAllCommand(true));
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    public void Dispose()
+    {
+        Config.Changed -= OnConfigChanged;
+        foreach (var s in subs)
+            s.Dispose();
+    }
+}
