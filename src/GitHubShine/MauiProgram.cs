@@ -33,7 +33,9 @@ public static class MauiProgram
 #else
             .UseMauiApp<App>()
 #endif
+#if !MOBILE
             .UseTrayIcon()
+#endif
             .ConfigureFonts(fonts =>
             {
                 fonts.AddFont("OpenSans-Regular.ttf", "OpenSansRegular");
@@ -52,6 +54,14 @@ public static class MauiProgram
         builder.Services.AddLinuxGtk4BlazorWebView();
 #endif
         builder.Services.AddShinyToast();
+
+        // Surface compile-time platform facts to the shared Blazor UI (e.g. to hide
+        // desktop-only nav items on phones).
+#if MOBILE
+        builder.Services.AddSingleton(new AppPlatformInfo(IsMobile: true));
+#else
+        builder.Services.AddSingleton(new AppPlatformInfo(IsMobile: false));
+#endif
 
         builder.Services.AddNotifications();
 
@@ -83,7 +93,10 @@ public static class MauiProgram
         // GitHubClientFactory, SnapshotCache) via the Shiny DI source generator.
         builder.Services.AddGeneratedServices();
 
+#if !MOBILE
+        // System-tray / menu-bar host is desktop-only (Shiny.Maui.Controls.Desktop).
         builder.Services.AddSingletonAsImplementedInterfaces<TrayIconHost>();
+#endif
         builder.Services.AddSingletonAsImplementedInterfaces<PollerInitializer>();
 
 #if MACOS

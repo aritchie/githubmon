@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- GitHub Shine toolbar mark: the "shine" sparkle/glint (no squircle), transparent. -->
+<svg width="456" height="456" viewBox="0 0 456 456" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+        <linearGradient id="shine" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#FFE9A8"/>
+            <stop offset="0.5" stop-color="#FFC23D"/>
+            <stop offset="1" stop-color="#F0A012"/>
+        </linearGradient>
+    </defs>
+
+    <!-- radiating light rays along the diagonals -->
+    <g stroke="#FFC23D" stroke-width="9" stroke-linecap="round" opacity="0.7">
+        <line x1="300" y1="160" x2="332" y2="128"/>
+        <line x1="156" y1="160" x2="124" y2="128"/>
+        <line x1="300" y1="304" x2="332" y2="336"/>
+        <line x1="156" y1="304" x2="124" y2="336"/>
+    </g>
+
+    <!-- primary 4-point sparkle -->
+    <path d="M 228 112
+             Q 252 208 344 232
+             Q 252 256 228 352
+             Q 204 256 112 232
+             Q 204 208 228 112 Z"
+          fill="url(#shine)"/>
+
+    <!-- secondary mini sparkle, top-right -->
+    <path d="M 330 138
+             Q 338 162 360 170
+             Q 338 178 330 202
+             Q 322 178 300 170
+             Q 322 162 330 138 Z"
+          fill="#FFE9A8"/>
+</svg>

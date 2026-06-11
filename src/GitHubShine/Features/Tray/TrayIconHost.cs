@@ -1,3 +1,6 @@
+// Desktop-only: the system tray / menu-bar host depends on Shiny.Maui.Controls.Desktop,
+// which isn't referenced on iOS/Android. Compile the whole file out on mobile heads.
+#if !MOBILE
 using System.Reflection;
 using Shiny.Maui.Controls.Desktop.TrayIcon;
 using Shiny.Mediator;
@@ -180,3 +183,4 @@ public sealed class TrayIconHost(ITrayIconFactory factory,
         subscriptions.Clear();
     }
 }
+#endif

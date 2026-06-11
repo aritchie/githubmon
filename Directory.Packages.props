@@ -15,7 +15,7 @@
     <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.7" />
     <PackageVersion Include="Shiny.Notifications" Version="5.0.0-beta-0133" />
     <PackageVersion Include="Shiny.Notifications.Linux" Version="5.0.0-beta-0133" />
-    <PackageVersion Include="Shiny.Blazor.Controls" Version="1.0.1-beta-0104" />
+    <PackageVersion Include="Shiny.Blazor.Controls" Version="1.0.1-beta-0107" />
     <PackageVersion Include="Shiny.Maui.Controls.Desktop" Version="1.0.1-beta-0101" />
     <PackageVersion Include="Shiny.DocumentDb.Sqlite" Version="6.1.0" />
     <PackageVersion Include="Shiny.DocumentDb.Extensions.DependencyInjection" Version="6.1.0" />

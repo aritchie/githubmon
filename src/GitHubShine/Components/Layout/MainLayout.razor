@@ -1,16 +1,33 @@
 @inherits LayoutComponentBase
-
-<div class="topbar">
-    <span class="brand">GitHub Shine</span>
-    <nav>
-        <NavLink href="/" Match="NavLinkMatch.All">Dashboard</NavLink>
-        <NavLink href="/accounts">Accounts</NavLink>
-        <NavLink href="/archive">Archive</NavLink>
-        <NavLink href="/settings">Settings</NavLink>
-    </nav>
-</div>
+@inject AppPlatformInfo Platform
 
 <main>
+    <ShinyToolbar Frosted="true"
+                  BlurRadius="18"
+                  TintColor="var(--toolbar-tint)"
+                  HasShadow="true"
+                  SafeArea="true"
+                  Sticky="true">
+        <StartContent>
+            <span class="toolbar-brand">
+                <img class="toolbar-logo" src="img/logo.svg" alt="" />
+                <span class="toolbar-title">GitHub Shine</span>
+            </span>
+        </StartContent>
+        <EndContent>
+            <nav class="toolbar-nav">
+                <NavLink href="/" Match="NavLinkMatch.All">Dashboard</NavLink>
+                <NavLink href="/accounts">Accounts</NavLink>
+                @if (!Platform.IsMobile)
+                {
+                    @* Archive isn't usable on phones — hide the nav item there. *@
+                    <NavLink href="/archive">Archive</NavLink>
+                }
+                <NavLink href="/settings">Settings</NavLink>
+            </nav>
+        </EndContent>
+    </ShinyToolbar>
+
     @Body
 </main>
 

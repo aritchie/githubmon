@@ -1,5 +1,4 @@
 using Octokit;
-using Shiny.Mediator;
 
 namespace GitHubShine.Dashboard.Mediator;
 
@@ -7,6 +6,8 @@ namespace GitHubShine.Dashboard.Mediator;
 public sealed class GetRepoSnapshotHandler(IGitHubClientFactory factory, ILogger<GetRepoSnapshotHandler> logger)
     : IRequestHandler<GetRepoSnapshotRequest, RepoSnapshot>
 {
+    
+    // [Cache(AbsoluteExpirationSeconds = 60 * 60 + 24)]
     public async Task<RepoSnapshot> Handle(GetRepoSnapshotRequest request, IMediatorContext context, CancellationToken cancellationToken)
     {
         var client = await factory.CreateAsync(request.Account.Id, cancellationToken).ConfigureAwait(false);
