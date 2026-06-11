@@ -1,12 +1,18 @@
-# GitHubMon
+<p align="center">
+  <img src="docs/icon.png" width="128" height="128" alt="GitHub Shine app icon" />
+</p>
 
-A cross-platform desktop dashboard for keeping an eye on the GitHub repositories you care about. GitHubMon is a **.NET MAUI Blazor Hybrid** app that polls GitHub through fine-grained personal access tokens and surfaces stars, forks, issues, pull requests, and CI build status at a glance — with native notifications when something needs your attention, a tray menu for quick access, and bulk source archiving.
+<h1 align="center">GitHub Shine</h1>
 
-![GitHubMon dashboard on macOS](docs/screenshot-dashboard.png)
+<p align="center"><em>Shine a spotlight on your github repos - powered by Shiny.NET</em></p>
+
+A cross-platform desktop dashboard for keeping an eye on the GitHub repositories you care about. GitHub Shine is a **.NET MAUI Blazor Hybrid** app that polls GitHub through fine-grained personal access tokens and surfaces stars, forks, issues, pull requests, and CI build status at a glance — with native notifications when something needs your attention, a tray menu for quick access, and bulk source archiving.
+
+![GitHub Shine dashboard on macOS](docs/screenshot-dashboard.png)
 
 ## Features
 
-GitHubMon is organized into four tabs — **Dashboard**, **Accounts**, **Archive**, and **Settings**.
+GitHub Shine is organized into four tabs — **Dashboard**, **Accounts**, **Archive**, and **Settings**.
 
 - **At-a-glance repo dashboard** — every monitored repo is rendered as a card showing open issues, open pull requests, stars, forks, watchers, and the status of its latest workflow run.
 - **Aggregate totals bar** — running sums across all repos for stars, forks, watchers, open issues, open PRs, and how many builds are currently passing vs. failing.
@@ -53,10 +59,10 @@ GitHubMon is organized into four tabs — **Dashboard**, **Accounts**, **Archive
 
 ```bash
 # from the repository root
-dotnet build GitHubMon.slnx
+dotnet build GitHubShine.slnx
 
 # run on the current desktop platform (macOS / Linux / Windows)
-dotnet build src/GitHubMon/GitHubMon.csproj -t:Run
+dotnet build src/GitHubShine/GitHubShine.csproj -t:Run
 ```
 
 On first launch, add a GitHub account with its fine-grained PAT, pick the repositories to monitor, and the dashboard will begin polling.
@@ -64,8 +70,8 @@ On first launch, add a GitHub account with its fine-grained PAT, pick the reposi
 ## Project Layout
 
 ```
-GitHubMon.slnx                  Solution
-src/GitHubMon/
+GitHubShine.slnx                  Solution
+src/GitHubShine/
 ├─ Components/                  Blazor pages, layout, and routes
 ├─ Features/
 │  ├─ Accounts/                 Account/repo config, secure token vault

@@ -1,0 +1,174 @@
+@page "/settings"
+@implements IDisposable
+@inject IConfigStore Config
+@inject IToastService Toast
+@inject IDatabaseBackup Backup
+@inject IFileDialogs FileDialogs
+
+<div class="page narrow">
+    <div class="page-header">
+        <div>
+            <h1>Settings</h1>
+            <span class="subtitle">Notifications, repository ordering, refresh interval, and backups.</span>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>Notifications</h2>
+        <div class="setting-row">
+            <div class="setting-label">
+                <div><strong>Mute notifications</strong></div>
+                <div class="hint">Silence new-issue, new-PR, and failed-build alerts without removing any accounts.</div>
+            </div>
+            <label class="switch">
+                <input type="checkbox" checked="@muted" @onchange="OnMuteChanged" />
+                <span class="track"></span>
+            </label>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>Repositories</h2>
+        <div class="setting-row">
+            <div class="setting-label">
+                <div><strong>Sort order</strong></div>
+                <div class="hint">Controls how repositories are ordered in the dashboard sidebar and the tray-icon menu.</div>
+            </div>
+            <select value="@sort" @onchange="OnSortChanged">
+                @foreach (var option in RepoSortInfo.All)
+                {
+                    <option value="@option">@RepoSortInfo.Label(option)</option>
+                }
+            </select>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>Refresh</h2>
+        <div class="setting-row">
+            <div class="setting-label">
+                <div><strong>Refresh interval</strong></div>
+                <div class="hint">How often GitHub Shine polls GitHub for fresh data. Applies on the next refresh cycle.</div>
+            </div>
+            <select value="@pollSeconds" @onchange="OnIntervalChanged">
+                @foreach (var seconds in intervalOptions)
+                {
+                    <option value="@seconds">@IntervalLabel(seconds)</option>
+                }
+            </select>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>Backup &amp; Restore</h2>
+        <p class="hint" style="margin-top:0;">
+            A backup is a single database file containing your accounts, repositories, access tokens,
+            and card order. It includes your tokens — keep it private.
+        </p>
+        <div class="actions-bar" style="margin-top:0;">
+            <button class="btn" @onclick="BackupAsync">Back up…</button>
+            <button class="btn" @onclick="RestoreAsync">Restore…</button>
+        </div>
+    </div>
+</div>
+
+@code {
+    bool muted;
+    RepoSort sort = RepoSort.Stars;
+    int pollSeconds = 60;
+
+    static readonly int[] presetIntervals = { 15, 30, 60, 120, 300, 600, 900, 1800, 3600 };
+    int[] intervalOptions = presetIntervals;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Config.PreferencesChanged += OnPreferencesChanged;
+        await LoadAsync();
+    }
+
+    async Task LoadAsync()
+    {
+        muted = await Config.GetNotificationsMutedAsync();
+        sort = await Config.GetRepoSortAsync();
+        pollSeconds = (int)(await Config.GetPollIntervalAsync()).TotalSeconds;
+        // A stored value from an older build might not match a preset — show it anyway.
+        intervalOptions = presetIntervals.Contains(pollSeconds)
+            ? presetIntervals
+            : presetIntervals.Append(pollSeconds).OrderBy(s => s).ToArray();
+    }
+
+    void OnPreferencesChanged(object? sender, EventArgs e)
+        => _ = InvokeAsync(async () =>
+        {
+            await LoadAsync();
+            StateHasChanged();
+        });
+
+    async Task OnMuteChanged(ChangeEventArgs e)
+    {
+        muted = (bool)e.Value!;
+        await Config.SetNotificationsMutedAsync(muted);
+    }
+
+    async Task OnSortChanged(ChangeEventArgs e)
+    {
+        if (Enum.TryParse<RepoSort>(e.Value?.ToString(), out var parsed))
+        {
+            sort = parsed;
+            await Config.SetRepoSortAsync(sort);
+        }
+    }
+
+    async Task OnIntervalChanged(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var seconds))
+        {
+            pollSeconds = seconds;
+            await Config.SetPollIntervalAsync(TimeSpan.FromSeconds(seconds));
+        }
+    }
+
+    static string IntervalLabel(int seconds) => seconds switch
+    {
+        < 60 => $"{seconds} seconds",
+        60 => "1 minute",
+        < 3600 => $"{seconds / 60} minutes",
+        3600 => "1 hour",
+        _ => $"{seconds / 3600} hours",
+    };
+
+    async Task BackupAsync()
+    {
+        try
+        {
+            var path = await FileDialogs.PickSavePathAsync($"githubshine-backup-{DateTime.Now:yyyyMMdd}.db");
+            if (path is null)
+                return;
+            await Backup.BackupToAsync(path);
+            await Toast.SuccessAsync($"Backed up to {path} — contains your tokens, keep it private");
+        }
+        catch (Exception ex)
+        {
+            await Toast.DangerAsync($"Backup failed: {ex.Message}");
+        }
+    }
+
+    async Task RestoreAsync()
+    {
+        try
+        {
+            var path = await FileDialogs.PickOpenPathAsync();
+            if (path is null)
+                return;
+            var rows = await Backup.RestoreFromAsync(path);
+            await Toast.SuccessAsync($"Restored {rows} record(s) — accounts, tokens and card order included");
+        }
+        catch (Exception ex)
+        {
+            await Toast.DangerAsync($"Restore failed: {ex.Message}");
+        }
+    }
+
+    public void Dispose()
+        => Config.PreferencesChanged -= OnPreferencesChanged;
+}

@@ -21,16 +21,16 @@
     happen at MSBuild evaluation time — once Xamarin tasks have loaded, env-var
     changes from inside a Target are not picked up.
   -->
-  <Target Name="_GitHubMonSetMacXcodeRoot"
+  <Target Name="_GitHubShineSetMacXcodeRoot"
           BeforeTargets="GetTargetFrameworks;CollectPackageReferences;Restore;Build;CoreCompile"
           Condition="$([MSBuild]::IsOSPlatform('osx'))">
     <PropertyGroup>
-      <_GitHubMonXcodeCandidate Condition="Exists('/Applications/Xcode_26.5.app')">/Applications/Xcode_26.5.app</_GitHubMonXcodeCandidate>
-      <_GitHubMonXcodeCandidate Condition="'$(_GitHubMonXcodeCandidate)' == '' AND Exists('/Applications/Xcode.app')">/Applications/Xcode.app</_GitHubMonXcodeCandidate>
+      <_GitHubShineXcodeCandidate Condition="Exists('/Applications/Xcode_26.5.app')">/Applications/Xcode_26.5.app</_GitHubShineXcodeCandidate>
+      <_GitHubShineXcodeCandidate Condition="'$(_GitHubShineXcodeCandidate)' == '' AND Exists('/Applications/Xcode.app')">/Applications/Xcode.app</_GitHubShineXcodeCandidate>
     </PropertyGroup>
     <SetEnvironmentVariable Name="MD_APPLE_SDK_ROOT"
-                            Value="$(_GitHubMonXcodeCandidate)"
-                            Condition="'$(_GitHubMonXcodeCandidate)' != '' AND '$(MD_APPLE_SDK_ROOT)' == ''" />
+                            Value="$(_GitHubShineXcodeCandidate)"
+                            Condition="'$(_GitHubShineXcodeCandidate)' != '' AND '$(MD_APPLE_SDK_ROOT)' == ''" />
   </Target>
 
   <UsingTask TaskName="SetEnvironmentVariable" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
