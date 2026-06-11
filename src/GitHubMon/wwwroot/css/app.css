@@ -230,6 +230,21 @@ input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px;
 
 /* ---------- Dashboard repo grid ---------- */
 
+.totals-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px 28px;
+    margin-bottom: 16px;
+}
+.totals-bar .total { display: flex; flex-direction: column; gap: 2px; }
+.totals-bar .total-value { font-size: 22px; font-weight: 700; line-height: 1.1; }
+.totals-bar .total-value.ok { color: var(--success, #2da44e); }
+.totals-bar .total-value.bad { color: var(--danger, #cf222e); }
+.totals-bar .total-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--fg-muted); }
+
+.repo-card .repo-stats { gap: 14px; }
+.repo-card .repo-stats .stat { color: var(--fg-muted); font-size: 12px; }
+
 .repo-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));

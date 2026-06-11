@@ -5,6 +5,9 @@ public sealed record RepoSnapshot(
     MonitoredRepo Repo,
     DateTimeOffset FetchedAt,
     int OpenIssues,
+    int Stars,
+    int Forks,
+    int Watchers,
     IReadOnlyList<PullRequestSummary> OpenPullRequests,
     IReadOnlyList<WorkflowRunSummary> RecentWorkflowRuns,
     string? ErrorMessage)
@@ -12,7 +15,7 @@ public sealed record RepoSnapshot(
     public bool HasError => ErrorMessage is not null;
 
     public static RepoSnapshot Empty(string accountId, MonitoredRepo repo, string? error = null)
-        => new(accountId, repo, DateTimeOffset.UtcNow, 0,
+        => new(accountId, repo, DateTimeOffset.UtcNow, 0, 0, 0, 0,
             Array.Empty<PullRequestSummary>(), Array.Empty<WorkflowRunSummary>(), error);
 }
 

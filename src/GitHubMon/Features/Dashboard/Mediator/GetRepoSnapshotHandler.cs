@@ -54,6 +54,9 @@ public sealed class GetRepoSnapshotHandler(IGitHubClientFactory factory, ILogger
                 request.Repo,
                 DateTimeOffset.UtcNow,
                 Math.Max(0, repo.OpenIssuesCount - prs.Length),
+                repo.StargazersCount,
+                repo.ForksCount,
+                repo.SubscribersCount,
                 prs,
                 runs,
                 null);

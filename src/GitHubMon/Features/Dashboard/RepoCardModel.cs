@@ -24,7 +24,12 @@ public sealed class RepoCardModel(MonitoredAccount account, MonitoredRepo repo)
 
     public int OpenIssues { get; private set; }
     public int OpenPullRequests { get; private set; }
+    public int Stars { get; private set; }
+    public int Forks { get; private set; }
+    public int Watchers { get; private set; }
     public string? LatestRunStatus { get; private set; }
+    public bool LatestRunSucceeded { get; private set; }
+    public bool LatestRunFailed { get; private set; }
     public PillType LatestRunPillType { get; private set; } = PillType.Info;
     public string? LatestRunDescription { get; private set; }
     public DateTimeOffset? LastUpdated { get; private set; }
@@ -41,6 +46,15 @@ public sealed class RepoCardModel(MonitoredAccount account, MonitoredRepo repo)
 
         OpenIssues = snap.OpenIssues;
         OpenPullRequests = snap.OpenPullRequests.Count;
+        Stars = snap.Stars;
+        Forks = snap.Forks;
+        Watchers = snap.Watchers;
+
+        // The latest run is the most useful signal for the dashboard's build totals,
+        // so flag whether this repo's newest run is currently a success or a failure.
+        var head = snap.RecentWorkflowRuns.FirstOrDefault();
+        LatestRunSucceeded = head?.IsSuccess ?? false;
+        LatestRunFailed = head?.IsFailed ?? false;
 
         var latest = snap.RecentWorkflowRuns.FirstOrDefault();
         if (latest is null)

@@ -64,6 +64,36 @@
         }
 
         <div class="section-title">Repositories <span class="muted" style="text-transform:none;font-weight:400;">— drag cards (or use ‹ ›) to reorder</span></div>
+        <div class="card totals-bar">
+            <div class="total">
+                <span class="total-value">@cards.Sum(c => c.Stars)</span>
+                <span class="total-label">★ Stars</span>
+            </div>
+            <div class="total">
+                <span class="total-value">@cards.Sum(c => c.Forks)</span>
+                <span class="total-label">⑂ Forks</span>
+            </div>
+            <div class="total">
+                <span class="total-value">@cards.Sum(c => c.Watchers)</span>
+                <span class="total-label">👁 Watchers</span>
+            </div>
+            <div class="total">
+                <span class="total-value">@cards.Sum(c => c.OpenIssues)</span>
+                <span class="total-label">Open issues</span>
+            </div>
+            <div class="total">
+                <span class="total-value">@cards.Sum(c => c.OpenPullRequests)</span>
+                <span class="total-label">Open PRs</span>
+            </div>
+            <div class="total">
+                <span class="total-value ok">@cards.Count(c => c.LatestRunSucceeded)</span>
+                <span class="total-label">Builds passing</span>
+            </div>
+            <div class="total">
+                <span class="total-value bad">@cards.Count(c => c.LatestRunFailed)</span>
+                <span class="total-label">Builds failing</span>
+            </div>
+        </div>
         <div class="repo-grid">
             @foreach (var card in cards)
             {
@@ -96,6 +126,11 @@
                               @onclick="() => Browser.Open(card.PullsUrl)">
                             <Pill Text="@($"PRs {card.OpenPullRequests}")" Type="PillType.Info" />
                         </span>
+                    </div>
+                    <div class="pills repo-stats">
+                        <span class="stat" title="Stargazers">★ @card.Stars</span>
+                        <span class="stat" title="Forks">⑂ @card.Forks</span>
+                        <span class="stat" title="Watchers">👁 @card.Watchers</span>
                     </div>
                     @if (card.LatestRunStatus is not null)
                     {
