@@ -12,12 +12,14 @@ public sealed class ConfigStore(
     const string KeyPollSeconds = "pollSeconds";
     const string KeyMuted = "muted";
     const string KeyRepoOrder = "repoOrder";
+    const string KeyRepoSort = "repoSort";
     const int DefaultPollSeconds = 60;
 
     IReadOnlyList<MonitoredAccount> accounts = Array.Empty<MonitoredAccount>();
 
     public IReadOnlyList<MonitoredAccount> Accounts => accounts;
     public event EventHandler? Changed;
+    public event EventHandler? PreferencesChanged;
 
     public async Task ReloadAsync(CancellationToken ct = default)
     {
@@ -48,6 +50,7 @@ public sealed class ConfigStore(
     public Task SetPollIntervalAsync(TimeSpan interval)
     {
         prefs.Set(KeyPollSeconds, (int)Math.Max(15, interval.TotalSeconds));
+        PreferencesChanged?.Invoke(this, EventArgs.Empty);
         return Task.CompletedTask;
     }
 
@@ -57,6 +60,17 @@ public sealed class ConfigStore(
     public Task SetNotificationsMutedAsync(bool muted)
     {
         prefs.Set(KeyMuted, muted);
+        PreferencesChanged?.Invoke(this, EventArgs.Empty);
+        return Task.CompletedTask;
+    }
+
+    public Task<RepoSort> GetRepoSortAsync()
+        => Task.FromResult((RepoSort)prefs.Get(KeyRepoSort, (int)RepoSort.Stars));
+
+    public Task SetRepoSortAsync(RepoSort sort)
+    {
+        prefs.Set(KeyRepoSort, (int)sort);
+        PreferencesChanged?.Invoke(this, EventArgs.Empty);
         return Task.CompletedTask;
     }
 

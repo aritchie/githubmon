@@ -29,6 +29,19 @@ public sealed class MacFileDialogs : IFileDialogs
             return panel.RunModal() == 1 ? panel.Url?.Path : null;
         });
 
+    public Task<string?> PickFolderAsync()
+        => OnMainThread(() =>
+        {
+            var panel = NSOpenPanel.OpenPanel;
+            panel.Title = "Choose a folder for the repo archives";
+            panel.Prompt = "Choose";
+            panel.CanChooseFiles = false;
+            panel.CanChooseDirectories = true;
+            panel.CanCreateDirectories = true;
+            panel.AllowsMultipleSelection = false;
+            return panel.RunModal() == 1 ? panel.Url?.Path : null;
+        });
+
     static Task<string?> OnMainThread(Func<string?> work)
     {
         var tcs = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);

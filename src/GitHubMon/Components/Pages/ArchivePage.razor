@@ -1,0 +1,205 @@
+@page "/archive"
+@implements IDisposable
+@inject IConfigStore Config
+@inject IRepoArchiver Archiver
+@inject IFileDialogs FileDialogs
+@inject IToastService Toast
+
+<div class="page narrow">
+    <div class="page-header">
+        <div>
+            <h1>Archive</h1>
+            <span class="subtitle">Download a source zip of each selected repo's default branch to a folder.</span>
+        </div>
+    </div>
+
+    @if (rows.Count == 0)
+    {
+        <div class="card empty-state">
+            <h2>No repositories to archive</h2>
+            <p>Add a GitHub account and monitor some repositories first.</p>
+        </div>
+    }
+    else
+    {
+        <div class="card">
+            <div class="repo-pick-toolbar">
+                <button class="btn" @onclick="SelectAll" disabled="@isBusy">Select all</button>
+                <button class="btn" @onclick="ClearAll" disabled="@isBusy">Clear</button>
+                <span class="muted">@SelectedCount of @rows.Count selected</span>
+                <span class="spacer" style="flex:1;"></span>
+                @if (isBusy)
+                {
+                    <button class="btn danger" @onclick="Cancel">Cancel</button>
+                }
+                else
+                {
+                    <button class="btn primary" @onclick="DownloadAsync" disabled="@(SelectedCount == 0)">
+                        Download @SelectedCount repo@(SelectedCount == 1 ? "" : "s")…
+                    </button>
+                }
+            </div>
+
+            @if (isBusy)
+            {
+                <div class="hint" style="margin-bottom:8px;">
+                    <span class="spinner"></span> Downloading @doneCount of @totalToDownload…
+                </div>
+            }
+
+            <div class="repo-pick-list">
+                @foreach (var row in rows)
+                {
+                    <label class="repo-pick-row" @key="row.Key">
+                        <input type="checkbox" checked="@row.Selected" disabled="@isBusy"
+                               @onchange="e => row.Selected = (bool)e.Value!" />
+                        <span class="name">@row.Repo.FullName</span>
+                        <span class="desc">@row.Account.Label</span>
+                        <span class="badge">
+                            @switch (row.Status)
+                            {
+                                case ArchiveStatus.Downloading:
+                                    <span class="spinner"></span>
+                                    break;
+                                case ArchiveStatus.Done:
+                                    <Pill Text="Saved" Type="PillType.Success" />
+                                    break;
+                                case ArchiveStatus.Failed:
+                                    <span title="@row.Message"><Pill Text="Failed" Type="PillType.Critical" /></span>
+                                    break;
+                            }
+                        </span>
+                    </label>
+                }
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    enum ArchiveStatus { Idle, Downloading, Done, Failed }
+
+    sealed class ArchiveRow(MonitoredAccount account, MonitoredRepo repo)
+    {
+        public MonitoredAccount Account { get; } = account;
+        public MonitoredRepo Repo { get; } = repo;
+        public string Key => $"{Account.Id}|{Repo.FullName}";
+        public bool Selected { get; set; }
+        public ArchiveStatus Status { get; set; }
+        public string? Message { get; set; }
+    }
+
+    readonly List<ArchiveRow> rows = new();
+    bool isBusy;
+    int doneCount;
+    int totalToDownload;
+    CancellationTokenSource? cts;
+
+    int SelectedCount => rows.Count(r => r.Selected);
+
+    protected override async Task OnInitializedAsync()
+    {
+        Config.Changed += OnConfigChanged;
+        await Config.ReloadAsync();
+        Rebuild();
+    }
+
+    void Rebuild()
+    {
+        // Preserve current selections across config refreshes.
+        var selected = rows.Where(r => r.Selected).Select(r => r.Key).ToHashSet();
+        rows.Clear();
+        foreach (var account in Config.Accounts)
+            foreach (var repo in account.Repos)
+                rows.Add(new ArchiveRow(account, repo) { Selected = selected.Contains($"{account.Id}|{repo.FullName}") });
+    }
+
+    void OnConfigChanged(object? sender, EventArgs e)
+        => _ = InvokeAsync(() =>
+        {
+            if (!isBusy)
+            {
+                Rebuild();
+                StateHasChanged();
+            }
+        });
+
+    void SelectAll() => rows.ForEach(r => r.Selected = true);
+    void ClearAll() => rows.ForEach(r => r.Selected = false);
+    void Cancel() => cts?.Cancel();
+
+    async Task DownloadAsync()
+    {
+        var targets = rows.Where(r => r.Selected).ToList();
+        if (targets.Count == 0)
+            return;
+
+        var folder = await FileDialogs.PickFolderAsync();
+        if (folder is null)
+            return;
+
+        cts = new CancellationTokenSource();
+        isBusy = true;
+        doneCount = 0;
+        totalToDownload = targets.Count;
+        var failures = 0;
+        foreach (var row in targets)
+        {
+            row.Status = ArchiveStatus.Idle;
+            row.Message = null;
+        }
+
+        try
+        {
+            // Sequential so we don't hold many full archives in memory at once or
+            // hammer the API; per-repo status updates keep the UI responsive.
+            foreach (var row in targets)
+            {
+                cts.Token.ThrowIfCancellationRequested();
+                row.Status = ArchiveStatus.Downloading;
+                StateHasChanged();
+                try
+                {
+                    await Archiver.ArchiveAsync(row.Account, row.Repo, folder, cts.Token);
+                    row.Status = ArchiveStatus.Done;
+                }
+                catch (OperationCanceledException)
+                {
+                    row.Status = ArchiveStatus.Idle;
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    row.Status = ArchiveStatus.Failed;
+                    row.Message = ex.Message;
+                    failures++;
+                }
+                doneCount++;
+                StateHasChanged();
+            }
+
+            if (failures == 0)
+                await Toast.SuccessAsync($"Saved {doneCount} repo{(doneCount == 1 ? "" : "s")} to {folder}");
+            else
+                await Toast.DangerAsync($"Saved {doneCount - failures} of {doneCount}, {failures} failed — see the Failed badges");
+        }
+        catch (OperationCanceledException)
+        {
+            await Toast.InfoAsync($"Cancelled — {doneCount} repo{(doneCount == 1 ? "" : "s")} saved to {folder}");
+        }
+        finally
+        {
+            isBusy = false;
+            cts?.Dispose();
+            cts = null;
+            StateHasChanged();
+        }
+    }
+
+    public void Dispose()
+    {
+        Config.Changed -= OnConfigChanged;
+        cts?.Cancel();
+        cts?.Dispose();
+    }
+}

@@ -13,5 +13,15 @@
         <div class="boot-splash">Loading GitHubMon…</div>
     </div>
     <script src="_framework/blazor.webview.js" autostart="false"></script>
+    <script>
+        window.gitHubMon = {
+            focusCard: function (id) {
+                const el = document.getElementById(id);
+                if (el) {
+                    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+            }
+        };
+    </script>
 </body>
 </html>

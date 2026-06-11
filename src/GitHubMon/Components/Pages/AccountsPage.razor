@@ -3,8 +3,6 @@
 @inject IConfigStore Config
 @inject NavigationManager Nav
 @inject IToastService Toast
-@inject IDatabaseBackup Backup
-@inject IFileDialogs FileDialogs
 
 <div class="page narrow">
     <div class="page-header">
@@ -13,10 +11,6 @@
             <span class="subtitle">Connect GitHub accounts using fine-grained personal access tokens.</span>
         </div>
         <span class="spacer"></span>
-        <button class="btn" title="Back up the database — accounts, repos, tokens and card order"
-                @onclick="BackupAsync">Backup</button>
-        <button class="btn" title="Restore accounts, repos, tokens and card order from a backup file"
-                @onclick="RestoreAsync">Restore</button>
         <button class="btn primary" @onclick="@(() => Nav.NavigateTo("/accounts/edit"))">+ Add account</button>
     </div>
 
@@ -85,38 +79,6 @@
         pendingDeleteId = null;
         await Config.RemoveAccountAsync(account.Id);
         await Toast.SuccessAsync($"Removed {account.Label}");
-    }
-
-    async Task BackupAsync()
-    {
-        try
-        {
-            var path = await FileDialogs.PickSavePathAsync($"githubmon-backup-{DateTime.Now:yyyyMMdd}.db");
-            if (path is null)
-                return;
-            await Backup.BackupToAsync(path);
-            await Toast.SuccessAsync($"Backed up to {path} — contains your tokens, keep it private");
-        }
-        catch (Exception ex)
-        {
-            await Toast.DangerAsync($"Backup failed: {ex.Message}");
-        }
-    }
-
-    async Task RestoreAsync()
-    {
-        try
-        {
-            var path = await FileDialogs.PickOpenPathAsync();
-            if (path is null)
-                return;
-            var rows = await Backup.RestoreFromAsync(path);
-            await Toast.SuccessAsync($"Restored {rows} record(s) — accounts, tokens and card order included");
-        }
-        catch (Exception ex)
-        {
-            await Toast.DangerAsync($"Restore failed: {ex.Message}");
-        }
     }
 
     public void Dispose()

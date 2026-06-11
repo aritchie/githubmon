@@ -7,6 +7,9 @@ public interface IFileDialogs
 
     /// <summary>Prompts for an existing file. Returns the chosen path, or null if cancelled.</summary>
     Task<string?> PickOpenPathAsync();
+
+    /// <summary>Prompts for a destination folder. Returns the chosen path, or null if cancelled.</summary>
+    Task<string?> PickFolderAsync();
 }
 
 /// <summary>
@@ -33,5 +36,11 @@ public sealed class DownloadsFolderFileDialogs : IFileDialogs
             .OrderByDescending(File.GetLastWriteTimeUtc)
             .FirstOrDefault();
         return Task.FromResult(newest);
+    }
+
+    public Task<string?> PickFolderAsync()
+    {
+        Directory.CreateDirectory(Downloads);
+        return Task.FromResult<string?>(Downloads);
     }
 }

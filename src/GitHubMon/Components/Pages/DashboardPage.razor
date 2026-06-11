@@ -5,6 +5,7 @@
 @inject SnapshotCache Cache
 @inject NavigationManager Nav
 @inject IExternalBrowser Browser
+@inject IJSRuntime JS
 
 <div class="page">
     <div class="page-header">
@@ -14,11 +15,6 @@
             <span class="subtitle">@statusText</span>
         }
         <span class="spacer"></span>
-        <label class="switch">
-            <input type="checkbox" checked="@muted" @onchange="OnMuteChanged" />
-            <span class="track"></span>
-            Mute notifications
-        </label>
         <button class="btn" @onclick="RefreshAsync" disabled="@isBusy">
             @if (isBusy)
             {
@@ -64,6 +60,46 @@
         }
 
         <div class="section-title">Repositories <span class="muted" style="text-transform:none;font-weight:400;">— drag cards (or use ‹ ›) to reorder</span></div>
+        <div class="repo-pick-toolbar">
+            <input type="search" value="@searchText" @oninput="OnSearchChanged"
+                   placeholder="Filter repos by name…" />
+            @if (searchText.Length > 0)
+            {
+                <span class="muted">@visibleCards.Count of @cards.Count</span>
+            }
+        </div>
+        <div class="repo-layout">
+            <aside class="card repo-sidebar">
+                <div class="sort-row">
+                    <label for="repo-sort">Sort by</label>
+                    <select id="repo-sort" value="@sort" @onchange="OnSortChanged">
+                        @foreach (var option in RepoSortInfo.All)
+                        {
+                            <option value="@option">@RepoSortInfo.Label(option)</option>
+                        }
+                    </select>
+                </div>
+                @if (sidebarCards.Count == 0)
+                {
+                    <div class="muted" style="padding:8px 10px;">No repos</div>
+                }
+                else
+                {
+                    <div class="sidebar-list">
+                        @foreach (var card in sidebarCards)
+                        {
+                            <button class="sidebar-repo @(focusedKey == card.Key ? "active" : "")"
+                                    @key="card.Key"
+                                    @onclick="() => FocusCardAsync(card)">
+                                <span class="status-dot @StatusDotClass(card)" title="@(card.LatestRunStatus ?? "No runs")"></span>
+                                <span class="s-name" title="@card.Title">@card.Title</span>
+                                <span class="s-metric">@SortMetric(card)</span>
+                            </button>
+                        }
+                    </div>
+                }
+            </aside>
+            <div class="repo-main">
         <div class="card totals-bar">
             <div class="total">
                 <span class="total-value">@cards.Sum(c => c.Stars)</span>
@@ -94,10 +130,17 @@
                 <span class="total-label">Builds failing</span>
             </div>
         </div>
+        @if (visibleCards.Count == 0)
+        {
+            <div class="card empty-state">
+                <p>No repos match “@searchText”.</p>
+            </div>
+        }
         <div class="repo-grid">
-            @foreach (var card in cards)
+            @foreach (var card in visibleCards)
             {
-                <div class="card repo-card @(dragKey == card.Key ? "dragging" : "")"
+                <div class="card repo-card @(dragKey == card.Key ? "dragging" : "") @(focusedKey == card.Key ? "focused" : "")"
+                     id="@CardElementId(card)"
                      @key="card.Key"
                      draggable="true"
                      @ondragstart="() => dragKey = card.Key"
@@ -149,6 +192,8 @@
                 </div>
             }
         </div>
+            </div>
+        </div>
     }
 </div>
 
@@ -158,22 +203,97 @@
     readonly List<IDisposable> subs = new();
 
     bool isBusy;
-    bool muted;
     string? statusText;
     string? dragKey;
+    string searchText = "";
+    string? focusedKey;
+    RepoSort sort = RepoSort.Stars;
     List<string> savedOrder = new();
+
+    // The cards visible after applying the search filter. A blank search shows everything.
+    IReadOnlyList<RepoCardModel> visibleCards =>
+        searchText.Length == 0
+            ? cards
+            : cards
+                .Where(c => c.Title.Contains(searchText, StringComparison.OrdinalIgnoreCase)
+                         || c.AccountLabel.Contains(searchText, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+    // The same set of cards as the grid, ordered for the sidebar by the chosen metric (highest first).
+    // The grid keeps the user's drag order; the sidebar is an independent, sorted view.
+    IReadOnlyList<RepoCardModel> sidebarCards => sort switch
+    {
+        RepoSort.Forks => visibleCards.OrderByDescending(c => c.Forks).ThenBy(c => c.Title).ToList(),
+        RepoSort.OpenIssues => visibleCards.OrderByDescending(c => c.OpenIssues).ThenBy(c => c.Title).ToList(),
+        RepoSort.OpenPullRequests => visibleCards.OrderByDescending(c => c.OpenPullRequests).ThenBy(c => c.Title).ToList(),
+        RepoSort.BuildState => visibleCards.OrderByDescending(BuildRank).ThenByDescending(c => c.Stars).ThenBy(c => c.Title).ToList(),
+        _ => visibleCards.OrderByDescending(c => c.Stars).ThenBy(c => c.Title).ToList(),
+    };
+
+    // Failing builds are the most actionable, so they sort to the top, then running, passing, and unknown.
+    static int BuildRank(RepoCardModel c)
+        => c.LatestRunFailed ? 3
+         : c.LatestRunStatus == "Running" ? 2
+         : c.LatestRunSucceeded ? 1
+         : 0;
+
+    string SortMetric(RepoCardModel c) => sort switch
+    {
+        RepoSort.Forks => $"⑂ {c.Forks}",
+        RepoSort.OpenIssues => $"{c.OpenIssues} issues",
+        RepoSort.OpenPullRequests => $"{c.OpenPullRequests} PRs",
+        RepoSort.BuildState => c.LatestRunStatus ?? "—",
+        _ => $"★ {c.Stars}",
+    };
+
+    static string StatusDotClass(RepoCardModel c)
+        => c.LatestRunFailed ? "bad"
+         : c.LatestRunSucceeded ? "ok"
+         : c.LatestRunStatus == "Running" ? "run"
+         : "";
+
+    // A DOM-safe id derived from the card key so the sidebar can scroll the matching grid card into view.
+    static string CardElementId(RepoCardModel card)
+        => "repo-" + new string(card.Key.Select(ch => char.IsLetterOrDigit(ch) ? ch : '-').ToArray());
+
+    void OnSearchChanged(ChangeEventArgs e)
+        => searchText = e.Value?.ToString() ?? "";
+
+    async Task OnSortChanged(ChangeEventArgs e)
+    {
+        if (Enum.TryParse<RepoSort>(e.Value?.ToString(), out var parsed) && parsed != sort)
+        {
+            sort = parsed;
+            await Config.SetRepoSortAsync(sort);
+        }
+    }
+
+    async Task FocusCardAsync(RepoCardModel card)
+    {
+        focusedKey = card.Key;
+        await JS.InvokeVoidAsync("gitHubMon.focusCard", CardElementId(card));
+    }
 
     protected override async Task OnInitializedAsync()
     {
         subs.Add(Mediator.Subscribe<SnapshotUpdatedEvent>(OnSnapshotUpdated));
         subs.Add(Mediator.Subscribe<InboxUpdatedEvent>(OnInboxUpdated));
         Config.Changed += OnConfigChanged;
+        Config.PreferencesChanged += OnPreferencesChanged;
 
         savedOrder = (await Config.GetRepoOrderAsync()).ToList();
+        sort = await Config.GetRepoSortAsync();
         await Config.ReloadAsync();
-        muted = await Config.GetNotificationsMutedAsync();
         RebuildCards();
     }
+
+    // The repo sort can also be changed from the Settings tab — keep the sidebar in sync.
+    void OnPreferencesChanged(object? sender, EventArgs e)
+        => _ = InvokeAsync(async () =>
+        {
+            sort = await Config.GetRepoSortAsync();
+            StateHasChanged();
+        });
 
     void RebuildCards()
     {
@@ -272,12 +392,6 @@
             StateHasChanged();
         });
 
-    async Task OnMuteChanged(ChangeEventArgs e)
-    {
-        muted = (bool)e.Value!;
-        await Config.SetNotificationsMutedAsync(muted);
-    }
-
     async Task RefreshAsync()
     {
         if (isBusy)
@@ -296,6 +410,7 @@
     public void Dispose()
     {
         Config.Changed -= OnConfigChanged;
+        Config.PreferencesChanged -= OnPreferencesChanged;
         foreach (var s in subs)
             s.Dispose();
     }
