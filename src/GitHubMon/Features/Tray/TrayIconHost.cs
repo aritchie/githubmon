@@ -48,8 +48,21 @@ public sealed class TrayIconHost(ITrayIconFactory factory,
                 RebuildMenu();
             });
             menu.Separator();
-            menu.Item("Quit", () => Application.Current?.Quit());
+            menu.Item("Quit", QuitApp);
         }));
+    }
+
+    static void QuitApp()
+    {
+#if MACOS
+        // Application.Quit() only closes windows, and our app overrides
+        // applicationShouldTerminateAfterLastWindowClosed: to return false so it
+        // lives in the tray — so Quit() alone leaves the process running. Terminate
+        // the native app directly to actually exit.
+        AppKit.NSApplication.SharedApplication.Terminate(null);
+#else
+        Application.Current?.Quit();
+#endif
     }
 
     static void ShowMainWindow()

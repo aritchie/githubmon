@@ -11,4 +11,39 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <!--
+    Workaround: when /Applications/Xcode.app is a symlink (e.g. → Xcode_26.5.app)
+    the .NET macOS SDK's xcrun fallback shells out via the symlinked path and
+    intermittently fails with "SDK MacOSX.sdk cannot be located" / install_name_tool
+    exit 72 during the native link / install_name_tool steps. Setting MD_APPLE_SDK_ROOT
+    to the resolved Xcode bundle (which Xamarin.MacDev.Tasks uses to populate
+    DEVELOPER_DIR for child processes) avoids the broken xcrun fallback. This must
+    happen at MSBuild evaluation time — once Xamarin tasks have loaded, env-var
+    changes from inside a Target are not picked up.
+  -->
+  <Target Name="_GitHubMonSetMacXcodeRoot"
+          BeforeTargets="GetTargetFrameworks;CollectPackageReferences;Restore;Build;CoreCompile"
+          Condition="$([MSBuild]::IsOSPlatform('osx'))">
+    <PropertyGroup>
+      <_GitHubMonXcodeCandidate Condition="Exists('/Applications/Xcode_26.5.app')">/Applications/Xcode_26.5.app</_GitHubMonXcodeCandidate>
+      <_GitHubMonXcodeCandidate Condition="'$(_GitHubMonXcodeCandidate)' == '' AND Exists('/Applications/Xcode.app')">/Applications/Xcode.app</_GitHubMonXcodeCandidate>
+    </PropertyGroup>
+    <SetEnvironmentVariable Name="MD_APPLE_SDK_ROOT"
+                            Value="$(_GitHubMonXcodeCandidate)"
+                            Condition="'$(_GitHubMonXcodeCandidate)' != '' AND '$(MD_APPLE_SDK_ROOT)' == ''" />
+  </Target>
+
+  <UsingTask TaskName="SetEnvironmentVariable" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
+    <ParameterGroup>
+      <Name ParameterType="System.String" Required="true" />
+      <Value ParameterType="System.String" Required="true" />
+    </ParameterGroup>
+    <Task>
+      <Code Type="Fragment" Language="cs"><![CDATA[
+        System.Environment.SetEnvironmentVariable(Name, Value);
+        Log.LogMessage(Microsoft.Build.Framework.MessageImportance.High, "Set " + Name + "=" + Value);
+      ]]></Code>
+    </Task>
+  </UsingTask>
+
 </Project>

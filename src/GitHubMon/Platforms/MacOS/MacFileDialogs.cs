@@ -9,12 +9,12 @@ public sealed class MacFileDialogs : IFileDialogs
     public Task<string?> PickSavePathAsync(string suggestedFileName)
         => OnMainThread(() =>
         {
-            var panel = new NSSavePanel
-            {
-                Title = "Back up GitHubMon",
-                NameFieldStringValue = suggestedFileName,
-                CanCreateDirectories = true
-            };
+            // NSSavePanel runs out-of-process on macOS 10.15+; use the SavePanel
+            // factory method instead of the deprecated public constructor.
+            var panel = NSSavePanel.SavePanel;
+            panel.Title = "Back up GitHubMon";
+            panel.NameFieldStringValue = suggestedFileName;
+            panel.CanCreateDirectories = true;
             return panel.RunModal() == 1 ? panel.Url?.Path : null;
         });
 

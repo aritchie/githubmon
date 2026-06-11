@@ -23,9 +23,9 @@
 		     Android, Windows, Tizen. It doesn't know about the maui-labs `macos` and `linux`
 		     identifiers, so we exclude those folders from default globbing and re-include
 		     them per TFM below. -->
-		<DefaultItemExcludes>$(DefaultItemExcludes);Platforms\MacOS\**;Platforms\Linux\**</DefaultItemExcludes>
+<!--<DefaultItemExcludes>$(DefaultItemExcludes);Platforms\MacOS\**;Platforms\Linux\**</DefaultItemExcludes>-->
 
-		<SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'macos'">14.0</SupportedOSPlatformVersion>
+		<SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'macos'">15.0</SupportedOSPlatformVersion>
 		<SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">10.0.17763.0</SupportedOSPlatformVersion>
 		<TargetPlatformMinVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">10.0.17763.0</TargetPlatformMinVersion>
 	</PropertyGroup>
@@ -50,6 +50,10 @@
 		<MauiAsset Include="Resources\Raw\**" LogicalName="%(RecursiveDir)%(Filename)%(Extension)" />
 	</ItemGroup>
 
+	<ItemGroup>
+		<None Include="Platforms\**\*.cs" />
+		<Compile Remove="Platforms\**\*.cs" />
+	</ItemGroup>
 	<!-- Stock MAUI SingleProject only auto-routes iOS, MacCatalyst, Android, Windows, Tizen.
 	     It also runs `<Compile Remove="Platforms\**" />` as part of its targets to strip every
 	     other Platforms/<X> folder, so a plain top-level ItemGroup Include gets removed.
@@ -60,6 +64,9 @@
 		</ItemGroup>
 		<ItemGroup Condition="'$(TargetFramework)' == 'net10.0' AND $([MSBuild]::IsOSPlatform('linux'))">
 			<Compile Include="Platforms\Linux\**\*.cs" />
+		</ItemGroup>
+		<ItemGroup Condition="$(TargetFramework.Contains('windows'))">
+			<Compile Include="Platforms\Windows\**\*.cs" />
 		</ItemGroup>
 	</Target>
 
@@ -100,6 +107,7 @@
 		<PackageReference Include="Platform.Maui.Linux.Gtk4.BlazorWebView" />
 		<PackageReference Include="Shiny.Notifications.Linux" />
 	</ItemGroup>
+	
 	<PropertyGroup Condition="'$(TargetFramework)' == 'net10.0' AND $([MSBuild]::IsOSPlatform('linux'))">
 		<DefineConstants>$(DefineConstants);LINUX</DefineConstants>
 	</PropertyGroup>
