@@ -1,34 +1,91 @@
 @inherits LayoutComponentBase
+@implements IDisposable
 @inject AppPlatformInfo Platform
+@inject NavigationManager Nav
 
 <main>
+    @* Nav lives in Items (not EndContent) so ShinyToolbar's auto-overflow kicks in:
+       when the links don't fit the bar's width they collapse behind a "More" menu.
+       The overflow logic is disabled whenever EndContent is set, so the brand goes
+       in StartContent and the links go through Items. *@
     <ShinyToolbar Frosted="true"
                   BlurRadius="18"
                   TintColor="var(--toolbar-tint)"
+                  TextColor="var(--fg)"
                   HasShadow="true"
                   SafeArea="true"
-                  Sticky="true">
+                  Sticky="true"
+                  ShowItemLabels="true"
+                  Items="navItems"
+                  OverflowText="More"
+                  OverflowAriaLabel="More navigation"
+                  MenuBackgroundColor="var(--card)"
+                  MenuTextColor="var(--fg)">
         <StartContent>
             <span class="toolbar-brand">
                 <img class="toolbar-logo" src="img/logo.svg" alt="" />
                 <span class="toolbar-title">GitHub Shine</span>
             </span>
         </StartContent>
-        <EndContent>
-            <nav class="toolbar-nav">
-                <NavLink href="/" Match="NavLinkMatch.All">Dashboard</NavLink>
-                <NavLink href="/accounts">Accounts</NavLink>
-                @if (!Platform.IsMobile)
-                {
-                    @* Archive isn't usable on phones — hide the nav item there. *@
-                    <NavLink href="/archive">Archive</NavLink>
-                }
-                <NavLink href="/settings">Settings</NavLink>
-            </nav>
-        </EndContent>
     </ShinyToolbar>
 
     @Body
 </main>
 
 <ToastHost />
+
+@code {
+    // Octicon-style line icons (24x24, stroke=currentColor) so they pick up the
+    // toolbar foreground — and the active item's IconColor — automatically.
+    const string DashboardIcon = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M3 11l9-8 9 8'/><path d='M5 10v10h14V10'/></svg>";
+    const string AccountsIcon = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='9' cy='8' r='3.2'/><path d='M3.5 20c0-3 2.7-5 5.5-5s5.5 2 5.5 5'/><path d='M16 5.5a3.2 3.2 0 0 1 0 6'/><path d='M21 20c0-2.4-1.4-4-3.4-4.6'/></svg>";
+    const string ArchiveIcon = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='3' y='4' width='18' height='4' rx='1'/><path d='M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8'/><path d='M10 12h4'/></svg>";
+    const string SettingsIcon = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='3'/><path d='M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.09a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.09a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z'/></svg>";
+
+    List<ToolbarItem> navItems = new();
+
+    protected override void OnInitialized()
+    {
+        BuildNav();
+        Nav.LocationChanged += OnLocationChanged;
+    }
+
+    void OnLocationChanged(object? sender, LocationChangedEventArgs e)
+    {
+        BuildNav();
+        StateHasChanged();
+    }
+
+    // Rebuilt on every navigation so the active link can be tinted. ToolbarItem
+    // exposes no per-item "active" hook, so IconColor doubles as the highlight
+    // (it sets the item's CSS color, which the icon + label both inherit).
+    void BuildNav()
+    {
+        var rel = Nav.ToBaseRelativePath(Nav.Uri).Split('?', '#')[0].Trim('/');
+
+        var items = new List<ToolbarItem>
+        {
+            NavItem(DashboardIcon, "Dashboard", "/", rel.Length == 0),
+            NavItem(AccountsIcon, "Accounts", "/accounts", IsSection(rel, "accounts")),
+        };
+        // Archive isn't usable on phones — hide the nav item there.
+        if (!Platform.IsMobile)
+            items.Add(NavItem(ArchiveIcon, "Archive", "/archive", IsSection(rel, "archive")));
+        items.Add(NavItem(SettingsIcon, "Settings", "/settings", IsSection(rel, "settings")));
+
+        navItems = items;
+    }
+
+    static bool IsSection(string rel, string segment)
+        => rel == segment || rel.StartsWith(segment + "/", StringComparison.Ordinal);
+
+    static ToolbarItem NavItem(string icon, string text, string href, bool active) => new()
+    {
+        Icon = icon,
+        Text = text,
+        Href = href,
+        IconColor = active ? "var(--link)" : null
+    };
+
+    public void Dispose() => Nav.LocationChanged -= OnLocationChanged;
+}

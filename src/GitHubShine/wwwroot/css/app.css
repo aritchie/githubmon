@@ -67,28 +67,18 @@ a:hover { text-decoration: underline; }
 
 /* ---------- Top navigation (Shiny frosted ShinyToolbar) ---------- */
 
-/* Let the brand region grow so the nav sits flush right. */
-.shiny-toolbar-start { flex: 1 1 auto; }
-
-.toolbar-brand { display: inline-flex; align-items: center; gap: 8px; }
+/* The brand sits in StartContent; the nav links go through ShinyToolbar.Items
+   (which drives the overflow "More" menu). Keep the brand at its natural width —
+   if it grows it starves the items region and forces everything into overflow. */
+.toolbar-brand { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
 .toolbar-logo { width: 30px; height: 30px; display: block; flex-shrink: 0; }
 .toolbar-title { font-size: 16px; font-weight: 700; color: var(--fg); }
 
-.toolbar-nav { display: flex; gap: 4px; }
-
-.toolbar-nav a {
-    padding: 5px 12px;
-    border-radius: 6px;
-    color: var(--fg);
-    font-weight: 500;
-}
-
-.toolbar-nav a:hover { background: var(--card-subtle); text-decoration: none; }
-.toolbar-nav a.active { background: var(--card-subtle); font-weight: 600; box-shadow: inset 0 0 0 1px var(--border); }
-
 /* Keep scrollable content clear of the iOS home indicator / gesture bar.
-   env() resolves to 0 on desktop, so this is a no-op there. */
-main { flex: 1; overflow-y: auto; padding-bottom: env(safe-area-inset-bottom); }
+   env() resolves to 0 on desktop, so this is a no-op there.
+   overflow-x:hidden is a safety net so a stray wide child never produces a
+   horizontal scrollbar on the app shell — pages are meant to fit the width. */
+main { flex: 1; overflow-y: auto; overflow-x: hidden; padding-bottom: env(safe-area-inset-bottom); }
 
 /* ---------- Page scaffolding ---------- */
 
@@ -242,7 +232,9 @@ input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px;
 
 .repo-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    /* min(100%, 320px) so a viewport narrower than the 320px track caps the
+       column at the container width instead of overflowing it (phones < 360px). */
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr));
     gap: 14px;
 }
 
