@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+    Entitlements used when ad-hoc re-signing the macOS Release .app for LOCAL distribution
+    (see eng/package-macos.sh). The labs macOS Release build ships an invalid signature, so
+    we re-sign. The .NET runtime's nested dylibs are ad-hoc signed independently, so the main
+    bundle must allow loading them (disable-library-validation) and allow the runtime's
+    JIT/executable memory. No App Sandbox here — the app reads its SQLite store from
+    ~/Library/Application Support and sandbox would block that for an unsigned/ad-hoc build.
+    For real distribution, sign with a Developer ID cert + notarize instead.
+-->
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.cs.allow-jit</key><true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key><true/>
+    <key>com.apple.security.cs.disable-library-validation</key><true/>
+</dict>
+</plist>
