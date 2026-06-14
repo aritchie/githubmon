@@ -46,6 +46,11 @@ html, body {
     font-size: 14px;
     line-height: 1.5;
     -webkit-font-smoothing: antialiased;
+    /* Disable all touch zoom in the iOS WKWebView: "pan-x pan-y" keeps scrolling in
+       both directions but removes the pinch-zoom and double-tap-zoom gestures (and the
+       legacy 300ms tap delay). Paired with the viewport meta (maximum-scale/user-scalable)
+       in index.html, which WKWebView honors to also block pinch zoom. */
+    touch-action: pan-x pan-y;
 }
 
 #app { height: 100%; display: flex; flex-direction: column; }
