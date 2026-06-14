@@ -4,7 +4,7 @@
 @inject IConfigStore Config
 @inject SnapshotCache Cache
 @inject NavigationManager Nav
-@inject IExternalBrowser Browser
+@inject IBrowser Browser
 @inject IJSRuntime JS
 
 <div class="page">
@@ -162,11 +162,11 @@
                     </div>
                     <div class="pills">
                         <span class="pill-link" title="Open issues on GitHub"
-                              @onclick="() => Browser.Open(card.IssuesUrl)">
+                              @onclick="() => Browser.OpenAsync(card.IssuesUrl, BrowserLaunchMode.External)">
                             <Pill Text="@($"Issues {card.OpenIssues}")" Type="PillType.Info" />
                         </span>
                         <span class="pill-link" title="Open pull requests on GitHub"
-                              @onclick="() => Browser.Open(card.PullsUrl)">
+                              @onclick="() => Browser.OpenAsync(card.PullsUrl, BrowserLaunchMode.External)">
                             <Pill Text="@($"PRs {card.OpenPullRequests}")" Type="PillType.Info" />
                         </span>
                     </div>
@@ -179,7 +179,7 @@
                     {
                         <div class="pills">
                             <span class="pill-link" title="Open this workflow run on GitHub"
-                                  @onclick="() => Browser.Open(card.LatestRunUrl ?? card.ActionsUrl)">
+                                  @onclick="() => Browser.OpenAsync(card.LatestRunUrl ?? card.ActionsUrl, BrowserLaunchMode.External)">
                                 <Pill Text="@card.LatestRunStatus" Type="card.LatestRunPillType" />
                                 <span class="run-desc">@card.LatestRunDescription</span>
                             </span>

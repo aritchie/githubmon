@@ -2,6 +2,7 @@
 // which isn't referenced on iOS/Android. Compile the whole file out on mobile heads.
 #if !MOBILE
 using System.Reflection;
+using Microsoft.Maui.ApplicationModel;
 using Shiny.Maui.Controls.Desktop.TrayIcon;
 using Shiny.Mediator;
 
@@ -11,7 +12,7 @@ public sealed class TrayIconHost(ITrayIconFactory factory,
                                  IConfigStore config,
                                  SnapshotCache cache,
                                  IMediator mediator,
-                                 IExternalBrowser browser,
+                                 IBrowser browser,
                                  ILogger<TrayIconHost> logger)
     : IMauiInitializeService, IDisposable
 {
@@ -81,7 +82,7 @@ public sealed class TrayIconHost(ITrayIconFactory factory,
                     foreach (var (account, repo, snap) in repos)
                     {
                         var url = $"https://github.com/{repo.FullName}";
-                        sub.Item($"{StatusIcon(snap)}  {repo.FullName}  ·  {Metric(snap, sort)}", () => browser.Open(url));
+                        sub.Item($"{StatusIcon(snap)}  {repo.FullName}  ·  {Metric(snap, sort)}", () => _ = browser.OpenAsync(url, BrowserLaunchMode.External));
                     }
                 });
                 menu.Separator();
