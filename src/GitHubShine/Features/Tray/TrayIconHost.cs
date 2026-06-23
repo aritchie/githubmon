@@ -19,6 +19,13 @@ public sealed class TrayIconHost(ITrayIconFactory factory,
     ITrayIcon? trayIcon;
     readonly List<IDisposable> subscriptions = new();
     int rebuildPending;
+    // The rendered content of the last menu we pushed. Snapshot/inbox events fire
+    // every poll cycle even when the displayed counts/statuses are identical, so we
+    // skip SetMenu when nothing visible changed — each SetMenu builds a fresh native
+    // menu tree, and rebuilding one every minute for the life of the app is a heavy,
+    // unbounded source of native allocations.
+    string? lastMenuSignature;
+    string? lastTooltip;
 
     public void Initialize(IServiceProvider services)
     {
@@ -43,7 +50,13 @@ public sealed class TrayIconHost(ITrayIconFactory factory,
         }
     }
 
-    void OnConfigChanged(object? sender, EventArgs e) => RebuildMenu();
+    // A config/preference change can alter the menu (accounts, sort, mute) without a
+    // matching snapshot event, so force the next build past the unchanged-content guard.
+    void OnConfigChanged(object? sender, EventArgs e)
+    {
+        lastMenuSignature = null;
+        RebuildMenu();
+    }
 
     // Snapshot/inbox events fire once per repo per poll cycle — coalesce the bursts
     // into a single rebuild so the menu isn't torn down dozens of times in a row.
@@ -66,6 +79,15 @@ public sealed class TrayIconHost(ITrayIconFactory factory,
             var muted = config.GetNotificationsMutedAsync().GetAwaiter().GetResult();
             var sort = config.GetRepoSortAsync().GetAwaiter().GetResult();
             var repos = OrderedRepos(sort);
+
+            // Everything the menu renders, in order — if it matches the last push,
+            // there's nothing to redraw and we avoid leaking another native menu tree.
+            var signature = string.Join("\n",
+                repos.Select(r => $"{StatusIcon(r.Snapshot)}|{r.Repo.FullName}|{Metric(r.Snapshot, sort)}")
+                    .Prepend($"muted={muted};sort={sort};count={repos.Count}"));
+            if (signature == lastMenuSignature)
+                return;
+            lastMenuSignature = signature;
 
             trayIcon.SetMenu(TrayMenu.Build(menu =>
             {
@@ -92,7 +114,12 @@ public sealed class TrayIconHost(ITrayIconFactory factory,
             }));
 
             var anyFailed = cache.All.Values.SelectMany(s => s.RecentWorkflowRuns).Any(r => r.IsFailed);
-            trayIcon.Tooltip = anyFailed ? "GitHub Shine — failures detected" : "GitHub Shine";
+            var tooltip = anyFailed ? "GitHub Shine — failures detected" : "GitHub Shine";
+            if (tooltip != lastTooltip)
+            {
+                trayIcon.Tooltip = tooltip;
+                lastTooltip = tooltip;
+            }
         }
         catch (Exception ex)
         {
@@ -109,6 +136,7 @@ public sealed class TrayIconHost(ITrayIconFactory factory,
         var ordered = sort switch
         {
             RepoSort.Forks => items.OrderByDescending(x => x.Snapshot?.Forks ?? 0).ThenBy(x => x.Repo.FullName),
+            RepoSort.Watchers => items.OrderByDescending(x => x.Snapshot?.Watchers ?? 0).ThenBy(x => x.Repo.FullName),
             RepoSort.OpenIssues => items.OrderByDescending(x => x.Snapshot?.OpenIssues ?? 0).ThenBy(x => x.Repo.FullName),
             RepoSort.OpenPullRequests => items.OrderByDescending(x => x.Snapshot?.OpenPullRequests.Count ?? 0).ThenBy(x => x.Repo.FullName),
             RepoSort.BuildState => items.OrderByDescending(x => BuildRank(x.Snapshot)).ThenByDescending(x => x.Snapshot?.Stars ?? 0).ThenBy(x => x.Repo.FullName),
@@ -135,6 +163,7 @@ public sealed class TrayIconHost(ITrayIconFactory factory,
     static string Metric(RepoSnapshot? snap, RepoSort sort) => sort switch
     {
         RepoSort.Forks => $"⑂ {snap?.Forks ?? 0}",
+        RepoSort.Watchers => $"👁 {snap?.Watchers ?? 0}",
         RepoSort.OpenIssues => $"{snap?.OpenIssues ?? 0} issues",
         RepoSort.OpenPullRequests => $"{snap?.OpenPullRequests.Count ?? 0} PRs",
         RepoSort.BuildState => BuildStatusText(snap),

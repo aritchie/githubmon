@@ -10,7 +10,9 @@ public enum RepoSort
     Forks,
     OpenIssues,
     OpenPullRequests,
-    BuildState
+    BuildState,
+    // Appended (not inserted) so existing persisted (int)RepoSort prefs keep their meaning.
+    Watchers
 }
 
 public static class RepoSortInfo
@@ -23,6 +25,7 @@ public static class RepoSortInfo
         RepoSort.OpenIssues => "Most open issues",
         RepoSort.OpenPullRequests => "Most open PRs",
         RepoSort.BuildState => "Build status",
+        RepoSort.Watchers => "Most watchers",
         _ => "Most stars",
     };
 }

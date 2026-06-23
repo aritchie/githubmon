@@ -224,6 +224,7 @@
     IReadOnlyList<RepoCardModel> sidebarCards => sort switch
     {
         RepoSort.Forks => visibleCards.OrderByDescending(c => c.Forks).ThenBy(c => c.Title).ToList(),
+        RepoSort.Watchers => visibleCards.OrderByDescending(c => c.Watchers).ThenBy(c => c.Title).ToList(),
         RepoSort.OpenIssues => visibleCards.OrderByDescending(c => c.OpenIssues).ThenBy(c => c.Title).ToList(),
         RepoSort.OpenPullRequests => visibleCards.OrderByDescending(c => c.OpenPullRequests).ThenBy(c => c.Title).ToList(),
         RepoSort.BuildState => visibleCards.OrderByDescending(BuildRank).ThenByDescending(c => c.Stars).ThenBy(c => c.Title).ToList(),
@@ -240,6 +241,7 @@
     string SortMetric(RepoCardModel c) => sort switch
     {
         RepoSort.Forks => $"⑂ {c.Forks}",
+        RepoSort.Watchers => $"👁 {c.Watchers}",
         RepoSort.OpenIssues => $"{c.OpenIssues} issues",
         RepoSort.OpenPullRequests => $"{c.OpenPullRequests} PRs",
         RepoSort.BuildState => c.LatestRunStatus ?? "—",
