@@ -234,6 +234,8 @@ input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px;
 
 .repo-card .repo-stats { gap: 14px; }
 .repo-card .repo-stats .stat { color: var(--fg-muted); font-size: 12px; }
+.repo-card .repo-stats .stat.stat-link { cursor: pointer; transition: color 0.12s ease; }
+.repo-card .repo-stats .stat.stat-link:hover { color: var(--link); }
 
 .repo-grid {
     display: grid;
@@ -267,6 +269,8 @@ input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px;
 .move-btn:disabled { opacity: 0.35; cursor: default; }
 
 .repo-card .repo-name { font-weight: 600; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.repo-card .repo-name.repo-link { cursor: pointer; }
+.repo-card .repo-name.repo-link:hover { color: var(--link); text-decoration: underline; }
 .repo-card .account-label { color: var(--fg-muted); font-size: 12px; }
 .repo-card .pills { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 

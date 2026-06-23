@@ -15,9 +15,13 @@ public sealed class RepoCardModel(MonitoredAccount account, MonitoredRepo repo)
     public string AccountLabel => Account.Label;
     public string Title => Repo.FullName;
 
+    public string RepoUrl => $"https://github.com/{Repo.FullName}";
     public string IssuesUrl => $"https://github.com/{Repo.FullName}/issues";
     public string PullsUrl => $"https://github.com/{Repo.FullName}/pulls";
     public string ActionsUrl => $"https://github.com/{Repo.FullName}/actions";
+    public string StarsUrl => $"https://github.com/{Repo.FullName}/stargazers";
+    public string ForksUrl => $"https://github.com/{Repo.FullName}/forks";
+    public string WatchersUrl => $"https://github.com/{Repo.FullName}/watchers";
 
     /// <summary>The latest workflow run's page (the failure detail when it failed); null until a run is seen.</summary>
     public string? LatestRunUrl { get; private set; }

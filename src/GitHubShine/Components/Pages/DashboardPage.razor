@@ -150,7 +150,8 @@
                      @ondrop="() => OnDropOnAsync(card)">
                     <div class="repo-card-head">
                         <div style="min-width:0;">
-                            <div class="repo-name">@card.Title</div>
+                            <div class="repo-name repo-link" title="Open repository on GitHub"
+                                 @onclick="() => Browser.OpenAsync(card.RepoUrl, BrowserLaunchMode.External)">@card.Title</div>
                             <div class="account-label">@card.AccountLabel</div>
                         </div>
                         <span class="move-buttons">
@@ -171,9 +172,12 @@
                         </span>
                     </div>
                     <div class="pills repo-stats">
-                        <span class="stat" title="Stargazers">★ @card.Stars</span>
-                        <span class="stat" title="Forks">⑂ @card.Forks</span>
-                        <span class="stat" title="Watchers">👁 @card.Watchers</span>
+                        <span class="stat stat-link" title="Open stargazers on GitHub"
+                              @onclick="() => Browser.OpenAsync(card.StarsUrl, BrowserLaunchMode.External)">★ @card.Stars</span>
+                        <span class="stat stat-link" title="Open forks on GitHub"
+                              @onclick="() => Browser.OpenAsync(card.ForksUrl, BrowserLaunchMode.External)">⑂ @card.Forks</span>
+                        <span class="stat stat-link" title="Open watchers on GitHub"
+                              @onclick="() => Browser.OpenAsync(card.WatchersUrl, BrowserLaunchMode.External)">👁 @card.Watchers</span>
                     </div>
                     @if (card.LatestRunStatus is not null)
                     {
