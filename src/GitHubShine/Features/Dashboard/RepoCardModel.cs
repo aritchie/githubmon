@@ -4,7 +4,8 @@ namespace GitHubShine.Dashboard;
 
 /// <summary>
 /// Per-repo display state for the dashboard grid. Mutable on purpose — the
-/// dashboard component re-renders after Apply, so no change notification needed.
+/// dashboard folds each snapshot in via Apply, which reports whether a rendered
+/// field changed so the page can skip re-rendering on an unchanged poll.
 /// </summary>
 public sealed class RepoCardModel(MonitoredAccount account, MonitoredRepo repo)
 {
@@ -40,13 +41,29 @@ public sealed class RepoCardModel(MonitoredAccount account, MonitoredRepo repo)
     public string? ErrorMessage { get; private set; }
     public bool HasError { get; private set; }
 
-    public void Apply(RepoSnapshot snap)
+    // Everything the dashboard actually renders for this card. LastUpdated is
+    // intentionally excluded — it isn't shown anywhere, so a poll that only
+    // refreshes the fetch timestamp must not count as a change.
+    (int, int, int, int, int, string?, bool, bool, PillType, string?, string?, bool, string?) RenderSignature()
+        => (OpenIssues, OpenPullRequests, Stars, Forks, Watchers,
+            LatestRunStatus, LatestRunSucceeded, LatestRunFailed,
+            LatestRunPillType, LatestRunDescription, LatestRunUrl, HasError, ErrorMessage);
+
+    /// <summary>
+    /// Folds a fresh snapshot into the card. Returns true only when a rendered
+    /// field actually changed — the dashboard polls every repo each cycle even
+    /// when nothing moved, and re-rendering on an identical snapshot ships a
+    /// wasted render batch into the WebView every minute for the life of the app.
+    /// </summary>
+    public bool Apply(RepoSnapshot snap)
     {
+        var before = RenderSignature();
+
         ErrorMessage = snap.ErrorMessage;
         HasError = snap.HasError;
         LastUpdated = snap.FetchedAt;
         if (snap.HasError)
-            return;
+            return RenderSignature() != before;
 
         OpenIssues = snap.OpenIssues;
         OpenPullRequests = snap.OpenPullRequests.Count;
@@ -67,7 +84,7 @@ public sealed class RepoCardModel(MonitoredAccount account, MonitoredRepo repo)
             LatestRunPillType = PillType.Info;
             LatestRunDescription = "—";
             LatestRunUrl = null;
-            return;
+            return RenderSignature() != before;
         }
 
         LatestRunUrl = string.IsNullOrEmpty(latest.HtmlUrl) ? null : latest.HtmlUrl;
@@ -93,5 +110,7 @@ public sealed class RepoCardModel(MonitoredAccount account, MonitoredRepo repo)
             LatestRunPillType = PillType.Info;
         }
         LatestRunDescription = $"{latest.WorkflowName} • {latest.Branch}";
+
+        return RenderSignature() != before;
     }
 }

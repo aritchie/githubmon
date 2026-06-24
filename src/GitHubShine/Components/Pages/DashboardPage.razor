@@ -380,8 +380,11 @@
             var card = cards.FirstOrDefault(c => c.Key == key);
             if (card is null)
                 return;
-            card.Apply(e.Snapshot);
-            StateHasChanged();
+            // Every poll re-snapshots every repo even when nothing moved; only
+            // re-render when a displayed value actually changed, so an idle app
+            // isn't pushing identical render batches into the WebView each minute.
+            if (card.Apply(e.Snapshot))
+                StateHasChanged();
         });
 
     Task OnInboxUpdated(InboxUpdatedEvent e, IMediatorContext _, CancellationToken __)
@@ -393,6 +396,10 @@
                 .Where(i => i.Reason is InboxReason.Mention or InboxReason.Assigned or InboxReason.ReviewRequested)
                 .OrderByDescending(i => i.UpdatedAt)
                 .ToList();
+            // InboxItem is a record, so SequenceEqual is a value comparison — skip
+            // the re-render (and its WebView render batch) when the list is identical.
+            if (merged.SequenceEqual(inbox))
+                return;
             inbox.Clear();
             inbox.AddRange(merged);
             StateHasChanged();
