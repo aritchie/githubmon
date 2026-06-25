@@ -35,6 +35,9 @@ public sealed class TrayIconHost(ITrayIconFactory factory,
             trayIcon.Tooltip = "GitHub Shine";
             trayIcon.IsTemplateImage = true;
             trayIcon.SetIcon(() => OpenIconStream("trayicon.png"));
+            // Left/primary click opens the dashboard; the menu (set in RebuildMenu) is
+            // reserved for right/secondary click.
+            trayIcon.PrimaryClick += OnPrimaryClick;
             RebuildMenu();
 
             // Accounts and the repo-sort preference both change the repo submenu;
@@ -190,6 +193,9 @@ public sealed class TrayIconHost(ITrayIconFactory factory,
 #endif
     }
 
+    void OnPrimaryClick(object? sender, TrayClickEventArgs e)
+        => ShowMainWindow();
+
     static void ShowMainWindow()
         => MainWindowLauncher.ShowOrCreate();
 
@@ -207,6 +213,8 @@ public sealed class TrayIconHost(ITrayIconFactory factory,
 
     public void Dispose()
     {
+        if (trayIcon != null)
+            trayIcon.PrimaryClick -= OnPrimaryClick;
         config.Changed -= OnConfigChanged;
         config.PreferencesChanged -= OnConfigChanged;
         foreach (var sub in subscriptions) sub.Dispose();
