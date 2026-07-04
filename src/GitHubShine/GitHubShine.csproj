@@ -89,7 +89,8 @@
 	</ItemGroup>
 
 	<ItemGroup Condition="'$(_IsMobile)' != 'true'">
-		<PackageReference Include="Shiny.Maui.Controls.Desktop" />
+		<!-- TEMP: local project reference to validate the WindowsTrayIcon fix; revert to PackageReference once republished. -->
+		<ProjectReference Include="..\..\..\controls\src\Shiny.Maui.Controls.Desktop\Shiny.Maui.Controls.Desktop.csproj" />
 	</ItemGroup>
 
 	<ItemGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'macos'">

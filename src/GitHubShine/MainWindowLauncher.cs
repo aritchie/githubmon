@@ -30,6 +30,14 @@ public static class MainWindowLauncher
                     Height = 760
                 });
             }
+#if WINDOWS
+            // The window is hidden (not destroyed) on close/minimize-to-tray, so
+            // un-hide it directly — ActivateWindow alone won't reveal a hidden AppWindow.
+            else if (window.Handler?.PlatformView is Microsoft.UI.Xaml.Window native)
+            {
+                Platforms.Windows.TrayWindowBehavior.Restore(native);
+            }
+#endif
             else
             {
                 app.ActivateWindow(window);

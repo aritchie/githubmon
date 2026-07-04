@@ -8,6 +8,9 @@ using Shiny.Mediator;
 #if MOBILE
 using Microsoft.Maui.ApplicationModel;
 #endif
+#if WINDOWS
+using Microsoft.Maui.LifecycleEvents;
+#endif
 #if MACOS
 using Microsoft.Maui.Essentials.MacOS;
 using Microsoft.Maui.Platform.MacOS.Hosting;
@@ -44,6 +47,15 @@ public static class MauiProgram
                 fonts.AddFont("OpenSans-Regular.ttf", "OpenSansRegular");
                 fonts.AddFont("OpenSans-Semibold.ttf", "OpenSansSemibold");
             });
+
+#if WINDOWS
+        // Close/minimize hides the window to the tray instead of exiting; re-shown
+        // via the tray icon (see MainWindowLauncher). Applied to every window head,
+        // including ones re-created after a close.
+        builder.ConfigureLifecycleEvents(events =>
+            events.AddWindows(windows =>
+                windows.OnWindowCreated(Platforms.Windows.TrayWindowBehavior.HookToTray)));
+#endif
 
 #if MACOS
         // Platform.Maui.MacOS.BlazorWebView's AddMacOSBlazorWebView only registers the

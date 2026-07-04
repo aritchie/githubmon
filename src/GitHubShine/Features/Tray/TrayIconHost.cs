@@ -188,6 +188,11 @@ public sealed class TrayIconHost(ITrayIconFactory factory,
         // lives in the tray — so Quit() alone leaves the process running. Terminate
         // the native app directly to actually exit.
         AppKit.NSApplication.SharedApplication.Terminate(null);
+#elif WINDOWS
+        // Close is intercepted to hide-to-tray; flag a real exit first so the window's
+        // Closing handler lets it through instead of hiding again.
+        GitHubShine.Platforms.Windows.TrayWindowBehavior.ForceClose = true;
+        Application.Current?.Quit();
 #else
         Application.Current?.Quit();
 #endif
