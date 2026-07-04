@@ -1,9 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk.Razor">
 
 	<PropertyGroup>
-		<!-- macOS is the dev box and can cross-build the mobile heads too (Xcode for iOS,
-		     Android SDK/JDK for Android), so it multi-targets desktop + mobile. Linux and
-		     Windows keep their single desktop head. -->
 		<TargetFrameworks Condition="$([MSBuild]::IsOSPlatform('osx'))">net10.0-macos;net10.0-ios;net10.0-android</TargetFrameworks>
 		<TargetFramework Condition="$([MSBuild]::IsOSPlatform('linux'))">net10.0</TargetFramework>
 		<TargetFramework Condition="$([MSBuild]::IsOSPlatform('windows'))">net10.0-windows10.0.19041.0</TargetFramework>
@@ -22,11 +19,7 @@
 
 		<WindowsPackageType>None</WindowsPackageType>
 
-		<!-- Stock MAUI SingleProject only auto-routes Platforms/<X> for iOS, MacCatalyst,
-		     Android, Windows, Tizen. It doesn't know about the maui-labs `macos` and `linux`
-		     identifiers, so we exclude those folders from default globbing and re-include
-		     them per TFM below. -->
-<!--<DefaultItemExcludes>$(DefaultItemExcludes);Platforms\MacOS\**;Platforms\Linux\**</DefaultItemExcludes>-->
+		<!--<DefaultItemExcludes>$(DefaultItemExcludes);Platforms\MacOS\**;Platforms\Linux\**</DefaultItemExcludes>-->
 
 		<SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'macos'">15.0</SupportedOSPlatformVersion>
 		<SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'ios'">15.0</SupportedOSPlatformVersion>
@@ -34,9 +27,8 @@
 		<SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">10.0.17763.0</SupportedOSPlatformVersion>
 		<TargetPlatformMinVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">10.0.17763.0</TargetPlatformMinVersion>
 
-		<!-- iOS and Android are the only true mobile heads; desktop-only packages and the
-		     system-tray code are gated off them via this flag / the MOBILE constant. -->
 		<_IsMobile Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'ios' OR $([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">true</_IsMobile>
+		<_IsLinux Condition="$(TargetFramework) == 'net10.0' AND $([MSBuild]::IsOSPlatform('linux'))">true</_IsLinux>
 	</PropertyGroup>
 
 	<PropertyGroup Condition="'$(_IsMobile)' == 'true'">
@@ -44,8 +36,6 @@
 	</PropertyGroup>
 
 	<ItemGroup>
-		<!-- Tray icon: template-style monochrome PNGs loaded by TrayIconHost via
-		     Assembly.GetManifestResourceStream("...trayicon.png"). -->
 		<None Remove="Resources\Tray\**" />
 		<EmbeddedResource Include="Resources\Tray\trayicon.png" />
 		<EmbeddedResource Include="Resources\Tray\trayicon@2x.png" />
@@ -53,8 +43,6 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<!-- appicon.svg is fully composed (background + artwork + macOS margins);
-		     no ForegroundFile, since the labs macOS icon task only renders the base. -->
 		<MauiIcon Include="Resources\AppIcon\appicon.svg" />
 		<MauiSplashScreen Include="Resources\Splash\splash.svg" Color="#24292F" BaseSize="128,128" />
 		<MauiImage Include="Resources\Images\*" />
@@ -67,27 +55,21 @@
 		<None Include="Platforms\**\*.cs" />
 		<Compile Remove="Platforms\**\*.cs" />
 	</ItemGroup>
-	<!-- Stock MAUI SingleProject only auto-routes iOS, MacCatalyst, Android, Windows, Tizen.
-	     It also runs `<Compile Remove="Platforms\**" />` as part of its targets to strip every
-	     other Platforms/<X> folder, so a plain top-level ItemGroup Include gets removed.
-	     We re-add the labs platform files in a target that runs before CoreCompile. -->
-	<Target Name="_GitHubShineReincludePlatformFiles" BeforeTargets="CoreCompile">
-		<ItemGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'macos'">
-			<Compile Include="Platforms\MacOS\**\*.cs" />
-		</ItemGroup>
-		<ItemGroup Condition="'$(TargetFramework)' == 'net10.0' AND $([MSBuild]::IsOSPlatform('linux'))">
-			<Compile Include="Platforms\Linux\**\*.cs" />
-		</ItemGroup>
-		<ItemGroup Condition="$(TargetFramework.Contains('windows'))">
-			<Compile Include="Platforms\Windows\**\*.cs" />
-		</ItemGroup>
-		<ItemGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">
-			<Compile Include="Platforms\Android\**\*.cs" />
-		</ItemGroup>
-		<ItemGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'ios'">
-			<Compile Include="Platforms\iOS\**\*.cs" />
-		</ItemGroup>
-	</Target>
+	<ItemGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'macos'">
+		<Compile Include="Platforms\MacOS\**\*.cs" />
+	</ItemGroup>
+	<ItemGroup Condition="'$(_IsLinux)' == 'true'">
+		<Compile Include="Platforms\Linux\**\*.cs" />
+	</ItemGroup>
+	<ItemGroup Condition="$(TargetFramework.Contains('windows'))">
+		<Compile Include="Platforms\Windows\**\*.cs" />
+	</ItemGroup>
+	<ItemGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">
+		<Compile Include="Platforms\Android\**\*.cs" />
+	</ItemGroup>
+	<ItemGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'ios'">
+		<Compile Include="Platforms\iOS\**\*.cs" />
+	</ItemGroup>
 
 	<ItemGroup>
 		<PackageReference Include="Microsoft.Maui.Controls" />
@@ -106,32 +88,24 @@
 		<PackageReference Include="Octokit" />
 	</ItemGroup>
 
-	<!-- Desktop-only: system tray / menu-bar host. No tray on iOS/Android. -->
 	<ItemGroup Condition="'$(_IsMobile)' != 'true'">
 		<PackageReference Include="Shiny.Maui.Controls.Desktop" />
 	</ItemGroup>
 
-	<!-- Native macOS (AppKit) via maui-labs: Platform.Maui.MacOS 0.3.x (renamed from
-	     Microsoft.Maui.Platforms.MacOS). BlazorWebView ships as its own package with a
-	     macOS-specific control (MacOSBlazorWebView). -->
 	<ItemGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'macos'">
 		<PackageReference Include="Platform.Maui.MacOS" />
 		<PackageReference Include="Platform.Maui.MacOS.Essentials" />
 		<PackageReference Include="Platform.Maui.MacOS.BlazorWebView" />
 	</ItemGroup>
 
-	<!-- Linux (GTK4) via maui-labs.
-	     Linux uses the bare net10.0 TFM (no -linux identifier), and that TFM is also built as
-	     a fallback DLL on macOS/Windows, so gate both the packages AND the LINUX define on
-	     IsOSPlatform('linux') to avoid pulling GTK refs into the non-runtime fallback. -->
-	<ItemGroup Condition="'$(TargetFramework)' == 'net10.0' AND $([MSBuild]::IsOSPlatform('linux'))">
+	<ItemGroup Condition="'$(_IsLinux)' == 'true'">
 		<PackageReference Include="Platform.Maui.Linux.Gtk4" />
 		<PackageReference Include="Platform.Maui.Linux.Gtk4.Essentials" />
 		<PackageReference Include="Platform.Maui.Linux.Gtk4.BlazorWebView" />
 		<PackageReference Include="Shiny.Notifications.Linux" />
 	</ItemGroup>
-	
-	<PropertyGroup Condition="'$(TargetFramework)' == 'net10.0' AND $([MSBuild]::IsOSPlatform('linux'))">
+
+	<PropertyGroup Condition="'$(_IsLinux)' == 'true'">
 		<DefineConstants>$(DefineConstants);LINUX</DefineConstants>
 	</PropertyGroup>
 

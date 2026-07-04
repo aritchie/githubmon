@@ -59,16 +59,14 @@ public static class MauiProgram
         builder.Services.AddShinyToast();
 
         // Surface compile-time platform facts to the shared Blazor UI (e.g. to hide
-        // desktop-only nav items on phones).
+        // desktop-only nav items on phones). Always registered — MainLayout injects it
+        // on every head — with the value fixed by the compile-time MOBILE constant.
 #if MOBILE
         builder.Services.AddSingleton(new AppPlatformInfo(IsMobile: true));
-        // MAUI doesn't register IBrowser in DI on mobile (the desktop maui-labs
-        // essentials do, via AddMacOSEssentials/AddLinuxGtk4Essentials), so wire up
-        // Browser.Default here for the components/tray that inject IBrowser.
-        builder.Services.AddSingleton<IBrowser>(Browser.Default);
 #else
         builder.Services.AddSingleton(new AppPlatformInfo(IsMobile: false));
 #endif
+        builder.Services.AddSingleton(Browser.Default);
 
         builder.Services.AddNotifications();
 
@@ -108,10 +106,12 @@ public static class MauiProgram
 
 #if MACOS
         builder.Services.AddSingleton<IFileDialogs, Platforms.MacOS.MacFileDialogs>();
+#elif WINDOWS
+        builder.Services.AddSingleton<IFileDialogs, Platforms.Windows.WindowsFileDialogs>();
 #else
         builder.Services.AddSingleton<IFileDialogs, DownloadsFolderFileDialogs>();
 #endif
-
+        
 #if DEBUG
         builder.Logging.AddDebug();
         builder.Logging.AddConsole();
