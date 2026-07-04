@@ -3,7 +3,7 @@ using AppKit;
 namespace GitHubShine.Platforms.MacOS;
 
 /// <summary>
-/// Platform.Maui.MacOS.BlazorWebView installs a full-width titlebar drag overlay
+/// Microsoft.Maui.Platforms.MacOS.BlazorWebView installs a full-width titlebar drag overlay
 /// whose HitTest swallows mouse clicks on the standard window buttons (they're
 /// not NSToolbarItems, the only thing it passes through) — making close/minimize/
 /// zoom unclickable. Shift the overlay's leading edge past the traffic-light zone

@@ -1,6 +1,6 @@
 using GitHubShine.Components;
 #if MACOS
-using Microsoft.Maui.Platform.MacOS.Controls;
+using Microsoft.Maui.Platforms.MacOS.Controls;
 #else
 using Microsoft.AspNetCore.Components.WebView.Maui;
 #endif
@@ -29,8 +29,8 @@ public class MainPage : ContentPage
         // Second pass covers slow window setup. Idempotent either way.
         Loaded += (_, _) =>
         {
-            Dispatcher.DispatchDelayed(TimeSpan.FromMilliseconds(300), Platforms.MacOS.TitlebarOverlayFixer.Apply);
-            Dispatcher.DispatchDelayed(TimeSpan.FromSeconds(2), Platforms.MacOS.TitlebarOverlayFixer.Apply);
+            Dispatcher.DispatchDelayed(TimeSpan.FromMilliseconds(300), GitHubShine.Platforms.MacOS.TitlebarOverlayFixer.Apply);
+            Dispatcher.DispatchDelayed(TimeSpan.FromSeconds(2), GitHubShine.Platforms.MacOS.TitlebarOverlayFixer.Apply);
         };
 #else
         var webView = new BlazorWebView { HostPage = "wwwroot/index.html" };

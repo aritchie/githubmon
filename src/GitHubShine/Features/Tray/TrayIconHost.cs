@@ -1,5 +1,6 @@
 // Desktop-only: the system tray / menu-bar host depends on Shiny.Maui.Controls.Desktop,
 // which isn't referenced on iOS/Android. Compile the whole file out on mobile heads.
+
 #if !MOBILE
 using System.Reflection;
 using Microsoft.Maui.ApplicationModel;
@@ -8,17 +9,20 @@ using Shiny.Mediator;
 
 namespace GitHubShine.Tray;
 
-public sealed class TrayIconHost(ITrayIconFactory factory,
-                                 IConfigStore config,
-                                 SnapshotCache cache,
-                                 IMediator mediator,
-                                 IBrowser browser,
-                                 ILogger<TrayIconHost> logger)
-    : IMauiInitializeService, IDisposable
+public sealed class TrayIconHost(
+    ITrayIconFactory factory,
+    IConfigStore config,
+    SnapshotCache cache,
+    IMediator mediator,
+    IBrowser browser,
+    ILogger<TrayIconHost> logger
+) : IMauiInitializeService, IDisposable
 {
     ITrayIcon? trayIcon;
     readonly List<IDisposable> subscriptions = new();
+
     int rebuildPending;
+
     // The rendered content of the last menu we pushed. Snapshot/inbox events fire
     // every poll cycle even when the displayed counts/statuses are identical, so we
     // skip SetMenu when nothing visible changed — each SetMenu builds a fresh native
@@ -44,8 +48,16 @@ public sealed class TrayIconHost(ITrayIconFactory factory,
             // snapshots change the per-repo counts, build state, and ordering.
             config.Changed += OnConfigChanged;
             config.PreferencesChanged += OnConfigChanged;
-            subscriptions.Add(mediator.Subscribe<SnapshotUpdatedEvent>((_, _, _) => { RequestMenuRebuild(); return Task.CompletedTask; }));
-            subscriptions.Add(mediator.Subscribe<InboxUpdatedEvent>((_, _, _) => { RequestMenuRebuild(); return Task.CompletedTask; }));
+            subscriptions.Add(mediator.Subscribe<SnapshotUpdatedEvent>((_, _, _) =>
+            {
+                RequestMenuRebuild();
+                return Task.CompletedTask;
+            }));
+            subscriptions.Add(mediator.Subscribe<InboxUpdatedEvent>((_, _, _) =>
+            {
+                RequestMenuRebuild();
+                return Task.CompletedTask;
+            }));
         }
         catch (Exception ex)
         {
@@ -104,10 +116,12 @@ public sealed class TrayIconHost(ITrayIconFactory factory,
                         sub.Item("No repositories", ShowMainWindow);
                         return;
                     }
+
                     foreach (var (account, repo, snap) in repos)
                     {
                         var url = $"https://github.com/{repo.FullName}";
-                        sub.Item($"{StatusIcon(snap)}  {repo.FullName}  ·  {Metric(snap, sort)}", () => _ = browser.OpenAsync(url, BrowserLaunchMode.External));
+                        sub.Item($"{StatusIcon(snap)}  {repo.FullName}  ·  {Metric(snap, sort)}",
+                            () => _ = browser.OpenAsync(url, BrowserLaunchMode.External));
                     }
                 });
                 menu.Separator();
@@ -140,9 +154,12 @@ public sealed class TrayIconHost(ITrayIconFactory factory,
         {
             RepoSort.Forks => items.OrderByDescending(x => x.Snapshot?.Forks ?? 0).ThenBy(x => x.Repo.FullName),
             RepoSort.Watchers => items.OrderByDescending(x => x.Snapshot?.Watchers ?? 0).ThenBy(x => x.Repo.FullName),
-            RepoSort.OpenIssues => items.OrderByDescending(x => x.Snapshot?.OpenIssues ?? 0).ThenBy(x => x.Repo.FullName),
-            RepoSort.OpenPullRequests => items.OrderByDescending(x => x.Snapshot?.OpenPullRequests.Count ?? 0).ThenBy(x => x.Repo.FullName),
-            RepoSort.BuildState => items.OrderByDescending(x => BuildRank(x.Snapshot)).ThenByDescending(x => x.Snapshot?.Stars ?? 0).ThenBy(x => x.Repo.FullName),
+            RepoSort.OpenIssues => items.OrderByDescending(x => x.Snapshot?.OpenIssues ?? 0)
+                .ThenBy(x => x.Repo.FullName),
+            RepoSort.OpenPullRequests => items.OrderByDescending(x => x.Snapshot?.OpenPullRequests.Count ?? 0)
+                .ThenBy(x => x.Repo.FullName),
+            RepoSort.BuildState => items.OrderByDescending(x => BuildRank(x.Snapshot))
+                .ThenByDescending(x => x.Snapshot?.Stars ?? 0).ThenBy(x => x.Repo.FullName),
             _ => items.OrderByDescending(x => x.Snapshot?.Stars ?? 0).ThenBy(x => x.Repo.FullName),
         };
         return ordered.ToList();

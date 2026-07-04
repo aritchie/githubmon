@@ -12,13 +12,13 @@ using Microsoft.Maui.ApplicationModel;
 using Microsoft.Maui.LifecycleEvents;
 #endif
 #if MACOS
-using Microsoft.Maui.Essentials.MacOS;
-using Microsoft.Maui.Platform.MacOS.Hosting;
+using Microsoft.Maui.Platforms.MacOS.Essentials;
+using Microsoft.Maui.Platforms.MacOS.Hosting;
 #endif
 #if LINUX
-using Platform.Maui.Linux.Gtk4.BlazorWebView;
-using Platform.Maui.Linux.Gtk4.Essentials;
-using Platform.Maui.Linux.Gtk4.Hosting;
+using Microsoft.Maui.Platforms.Linux.Gtk4.BlazorWebView;
+using Microsoft.Maui.Platforms.Linux.Gtk4.Essentials.Hosting;
+using Microsoft.Maui.Platforms.Linux.Gtk4.Hosting;
 #endif
 
 namespace GitHubShine;
@@ -54,11 +54,11 @@ public static class MauiProgram
         // including ones re-created after a close.
         builder.ConfigureLifecycleEvents(events =>
             events.AddWindows(windows =>
-                windows.OnWindowCreated(Platforms.Windows.TrayWindowBehavior.HookToTray)));
+                windows.OnWindowCreated(GitHubShine.Platforms.Windows.TrayWindowBehavior.HookToTray)));
 #endif
 
 #if MACOS
-        // Platform.Maui.MacOS.BlazorWebView's AddMacOSBlazorWebView only registers the
+        // Microsoft.Maui.Platforms.MacOS.BlazorWebView's AddMacOSBlazorWebView only registers the
         // handler — the core Blazor services (NavigationManager, IJSRuntime, ...) still
         // need to be registered or AttachToPage fails at runtime.
         builder.Services.AddBlazorWebView();
@@ -117,9 +117,9 @@ public static class MauiProgram
         builder.Services.AddSingletonAsImplementedInterfaces<PollerInitializer>();
 
 #if MACOS
-        builder.Services.AddSingleton<IFileDialogs, Platforms.MacOS.MacFileDialogs>();
+        builder.Services.AddSingleton<IFileDialogs, GitHubShine.Platforms.MacOS.MacFileDialogs>();
 #elif WINDOWS
-        builder.Services.AddSingleton<IFileDialogs, Platforms.Windows.WindowsFileDialogs>();
+        builder.Services.AddSingleton<IFileDialogs, GitHubShine.Platforms.Windows.WindowsFileDialogs>();
 #else
         builder.Services.AddSingleton<IFileDialogs, DownloadsFolderFileDialogs>();
 #endif
