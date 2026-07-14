@@ -1,17 +1,16 @@
 @page "/accounts/edit"
 @page "/accounts/edit/{AccountId}"
-@using Octokit
 @inject ITokenVault Vault
 @inject IConfigStore Config
-@inject IGitHubClientFactory Factory
+@inject IGitProviderFactory Factory
 @inject NavigationManager Nav
 @inject IToastService Toast
 
 <div class="page narrow">
     <div class="page-header">
         <div>
-            <h1>GitHub account</h1>
-            <span class="subtitle">Connect a GitHub account by giving it a label and a fine-grained personal access token.</span>
+            <h1>Account</h1>
+            <span class="subtitle">Connect a GitHub or Gitea account by giving it a label and a personal access token.</span>
         </div>
     </div>
 
@@ -24,12 +23,29 @@
         </div>
 
         <div class="field">
+            <label>Provider</label>
+            <select @bind="providerType">
+                <option value="@GitProviderType.GitHub">GitHub</option>
+                <option value="@GitProviderType.Gitea">Gitea / Forgejo</option>
+            </select>
+        </div>
+
+        <div class="field">
             <label>
-                Fine-grained personal access token
-                <span class="hint">— github.com/settings/personal-access-tokens</span>
+                Host URL
+                <span class="hint">@(providerType == GitProviderType.Gitea ? "— required, e.g. https://gitea.com" : "— optional; leave blank for github.com, or set a GitHub Enterprise host")</span>
+            </label>
+            <input type="text" @bind="hostUrl"
+                   placeholder="@(providerType == GitProviderType.Gitea ? "https://gitea.com" : "https://github.example.com (optional)")" />
+        </div>
+
+        <div class="field">
+            <label>
+                Personal access token
+                <span class="hint">@(providerType == GitProviderType.Gitea ? "— {host}/user/settings/applications" : "— github.com/settings/personal-access-tokens")</span>
             </label>
             <input type="password" @bind="token"
-                   placeholder="@(hasSavedToken ? "•••••••• (token saved — leave blank to keep it)" : "github_pat_...")" />
+                   placeholder="@TokenPlaceholder" />
             @if (hasSavedToken)
             {
                 <div class="hint" style="margin-top: 4px;">
@@ -145,6 +161,8 @@
 
     string label = "";
     string token = "";
+    GitProviderType providerType = GitProviderType.GitHub;
+    string hostUrl = "";
     string? validationMessage;
     string? validatedUsername;
     bool isBusy;
@@ -156,6 +174,10 @@
     List<string> existingRepoFullNames = new();
     readonly List<RepoSelection> availableRepos = new();
     List<RepoSelection> filteredRepos = new();
+
+    string TokenPlaceholder => hasSavedToken
+        ? "•••••••• (token saved — leave blank to keep it)"
+        : (providerType == GitProviderType.Gitea ? "your Gitea token" : "github_pat_...");
 
     bool ShowRepoList => hasFetchedRepos || availableRepos.Count > 0;
     int SelectedCount => availableRepos.Count(r => r.IsSelected);
@@ -173,6 +195,8 @@
         if (account is not null)
         {
             label = account.Label;
+            providerType = account.ProviderType;
+            hostUrl = account.HostUrl ?? "";
             validatedUsername = account.Username;
             existingRepoFullNames = account.Repos.Select(r => r.FullName).ToList();
             hasSavedToken = !string.IsNullOrWhiteSpace(await Vault.GetTokenAsync(account.Id));
@@ -258,18 +282,20 @@
             validationMessage = "Enter a token first";
             return;
         }
+        if (providerType == GitProviderType.Gitea && string.IsNullOrWhiteSpace(hostUrl))
+        {
+            validationMessage = "A host URL is required for Gitea";
+            return;
+        }
         isBusy = true;
         try
         {
-            var client = new GitHubClient(new ProductHeaderValue("GitHubShine-Validate"))
-            {
-                Credentials = new Credentials(effectiveToken)
-            };
-            var user = await client.User.Current();
+            var provider = Factory.Create(providerType, EffectiveHost, effectiveToken, AccountId ?? "validate");
+            var user = await provider.ValidateAndGetUserAsync();
             validatedUsername = user.Login;
             validationMessage = $"Authenticated as @{user.Login}";
 
-            await FetchReposAsync(client);
+            await FetchReposAsync(provider);
         }
         catch (Exception ex)
         {
@@ -282,7 +308,9 @@
         }
     }
 
-    async Task FetchReposAsync(GitHubClient client)
+    string? EffectiveHost => string.IsNullOrWhiteSpace(hostUrl) ? null : hostUrl.Trim();
+
+    async Task FetchReposAsync(IGitProvider provider)
     {
         isLoadingRepos = true;
         try
@@ -298,19 +326,14 @@
 
             availableRepos.Clear();
 
-            var fetched = await client.Repository.GetAllForCurrent(new ApiOptions
-            {
-                PageSize = 100,
-                PageCount = 5,    // up to 500 repos — enough for any fine-grained PAT
-                StartPage = 1
-            });
+            var fetched = await provider.ListAccessibleReposAsync();
 
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var r in fetched.OrderBy(x => x.FullName, StringComparer.OrdinalIgnoreCase))
             {
                 availableRepos.Add(new RepoSelection
                 {
-                    Owner = r.Owner.Login,
+                    Owner = r.Owner,
                     Name = r.Name,
                     Description = r.Description,
                     Private = r.Private,
@@ -356,6 +379,11 @@
             validationMessage = "Label required";
             return;
         }
+        if (providerType == GitProviderType.Gitea && string.IsNullOrWhiteSpace(hostUrl))
+        {
+            validationMessage = "A host URL is required for Gitea";
+            return;
+        }
         isBusy = true;
         try
         {
@@ -364,13 +392,12 @@
                 .Where(r => r.IsSelected)
                 .Select(r => new MonitoredRepo(r.Owner, r.Name))
                 .ToList();
-            var account = new MonitoredAccount(id, label.Trim(), validatedUsername, repos);
+            var account = new MonitoredAccount(id, label.Trim(), validatedUsername, repos, providerType, EffectiveHost);
             await Config.UpsertAccountAsync(account);
             if (!string.IsNullOrWhiteSpace(token))
-            {
                 await Vault.SetTokenAsync(id, token);
-                Factory.Invalidate(id);
-            }
+            // Drop any cached provider so provider-type / host / token edits take effect.
+            Factory.Invalidate(id);
             await Toast.SuccessAsync($"Saved {label.Trim()} — {repos.Count} repo(s)");
             Nav.NavigateTo("/accounts");
         }

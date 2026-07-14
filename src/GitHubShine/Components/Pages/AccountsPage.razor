@@ -28,7 +28,10 @@
         {
             <div class="card account-row" @key="account.Id">
                 <div class="account-body">
-                    <div><strong>@account.Label</strong></div>
+                    <div>
+                        <strong>@account.Label</strong>
+                        <Pill Text="@ProviderLabel(account)" Type="PillType.Info" />
+                    </div>
                     @if (account.Username is not null)
                     {
                         <div class="meta">@@@account.Username</div>
@@ -53,6 +56,14 @@
 @code {
     readonly List<MonitoredAccount> accounts = new();
     string? pendingDeleteId;
+
+    static string ProviderLabel(MonitoredAccount a)
+        => a.ProviderType == GitProviderType.Gitea
+            ? $"Gitea · {HostDisplay(a.HostUrl)}"
+            : (a.HostUrl is null ? "GitHub" : $"GitHub · {HostDisplay(a.HostUrl)}");
+
+    static string HostDisplay(string? host)
+        => Uri.TryCreate(host, UriKind.Absolute, out var u) ? u.Host : (host ?? "");
 
     protected override async Task OnInitializedAsync()
     {

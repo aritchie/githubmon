@@ -119,7 +119,7 @@ public sealed class TrayIconHost(
 
                     foreach (var (account, repo, snap) in repos)
                     {
-                        var url = $"https://github.com/{repo.FullName}";
+                        var url = $"{account.WebBaseUrl}/{repo.FullName}";
                         sub.Item($"{StatusIcon(snap)}  {repo.FullName}  ·  {Metric(snap, sort)}",
                             () => _ = browser.OpenAsync(url, BrowserLaunchMode.External));
                     }

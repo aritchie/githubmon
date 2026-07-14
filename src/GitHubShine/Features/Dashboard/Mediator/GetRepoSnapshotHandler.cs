@@ -1,65 +1,39 @@
-using Octokit;
-
 namespace GitHubShine.Dashboard.Mediator;
 
 [MediatorSingleton]
-public sealed class GetRepoSnapshotHandler(IGitHubClientFactory factory, ILogger<GetRepoSnapshotHandler> logger)
+public sealed class GetRepoSnapshotHandler(IGitProviderFactory factory, ILogger<GetRepoSnapshotHandler> logger)
     : IRequestHandler<GetRepoSnapshotRequest, RepoSnapshot>
 {
-    
+
     // [Cache(AbsoluteExpirationSeconds = 60 * 60 + 24)]
     public async Task<RepoSnapshot> Handle(GetRepoSnapshotRequest request, IMediatorContext context, CancellationToken cancellationToken)
     {
-        var client = await factory.CreateAsync(request.Account.Id, cancellationToken).ConfigureAwait(false);
-        if (client is null)
+        var provider = await factory.CreateAsync(request.Account, cancellationToken).ConfigureAwait(false);
+        if (provider is null)
             return RepoSnapshot.Empty(request.Account.Id, request.Repo, "No token configured");
 
         try
         {
-            var owner = request.Repo.Owner;
-            var name = request.Repo.Name;
+            var repo = request.Repo;
 
-            var repoTask = client.Repository.Get(owner, name);
-            var prsTask = client.PullRequest.GetAllForRepository(owner, name, new PullRequestRequest
-            {
-                State = ItemStateFilter.Open
-            });
-            var runsTask = client.Actions.Workflows.Runs.List(owner, name, new WorkflowRunsRequest(), new ApiOptions { PageSize = 10, PageCount = 1 });
+            var statsTask = provider.GetRepoStatsAsync(repo, cancellationToken);
+            var prsTask = provider.GetOpenPullRequestsAsync(repo, cancellationToken);
+            var runsTask = provider.GetRecentWorkflowRunsAsync(repo, 10, cancellationToken);
 
-            await Task.WhenAll(repoTask, prsTask, runsTask).ConfigureAwait(false);
+            await Task.WhenAll(statsTask, prsTask, runsTask).ConfigureAwait(false);
 
-            var repo = repoTask.Result;
-            var prs = prsTask.Result
-                .Select(p => new PullRequestSummary(
-                    p.Number,
-                    p.Title,
-                    p.User?.Login ?? "?",
-                    p.HtmlUrl,
-                    p.Draft,
-                    p.Mergeable ?? false))
-                .ToArray();
-
-            var runs = runsTask.Result.WorkflowRuns
-                .Select(r => new WorkflowRunSummary(
-                    r.Id,
-                    r.Name ?? "(workflow)",
-                    r.HeadBranch ?? "?",
-                    r.Status.ToString() ?? "unknown",
-                    r.Conclusion?.ToString(),
-                    r.CreatedAt,
-                    r.HtmlUrl ?? string.Empty))
-                .ToArray();
+            var stats = statsTask.Result;
 
             return new RepoSnapshot(
                 request.Account.Id,
                 request.Repo,
                 DateTimeOffset.UtcNow,
-                Math.Max(0, repo.OpenIssuesCount - prs.Length),
-                repo.StargazersCount,
-                repo.ForksCount,
-                repo.SubscribersCount,
-                prs,
-                runs,
+                stats.OpenIssues,
+                stats.Stars,
+                stats.Forks,
+                stats.Watchers,
+                prsTask.Result,
+                runsTask.Result,
                 null);
         }
         catch (Exception ex)

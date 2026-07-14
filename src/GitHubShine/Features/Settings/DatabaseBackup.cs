@@ -13,7 +13,7 @@ public interface IDatabaseBackup
 }
 
 [Singleton]
-public sealed class SqliteDatabaseBackup(IConfigStore config, IGitHubClientFactory factory) : IDatabaseBackup
+public sealed class SqliteDatabaseBackup(IConfigStore config, IGitProviderFactory factory) : IDatabaseBackup
 {
     // Tables owned by the DocumentStore (see MapTypeToTable calls in MauiProgram).
     static readonly string[] Tables = ["MonitoredAccount", "StoredToken", "SeenFailedRun", "SeenInboxItem", "DashboardPrefs"];

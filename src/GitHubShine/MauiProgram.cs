@@ -107,7 +107,7 @@ public static class MauiProgram
         });
 
         // [Singleton]-attributed services (ConfigStore, SecureTokenVault,
-        // GitHubClientFactory, SnapshotCache) via the Shiny DI source generator.
+        // GitProviderFactory, SnapshotCache) via the Shiny DI source generator.
         builder.Services.AddGeneratedServices();
 
 #if !MOBILE
