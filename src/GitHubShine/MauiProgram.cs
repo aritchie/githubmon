@@ -120,6 +120,8 @@ public static class MauiProgram
         builder.Services.AddSingleton<IFileDialogs, GitHubShine.Platforms.MacOS.MacFileDialogs>();
 #elif WINDOWS
         builder.Services.AddSingleton<IFileDialogs, GitHubShine.Platforms.Windows.WindowsFileDialogs>();
+#elif MOBILE
+        builder.Services.AddSingleton<IFileDialogs, MobileFileDialogs>();
 #else
         builder.Services.AddSingleton<IFileDialogs, DownloadsFolderFileDialogs>();
 #endif

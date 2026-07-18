@@ -145,7 +145,11 @@
             if (path is null)
                 return;
             await Backup.BackupToAsync(path);
-            await Toast.SuccessAsync($"Backed up to {path} — contains your tokens, keep it private");
+            // Desktop wrote to the user's chosen location (returns false → confirm with the path).
+            // Mobile staged a temp file and hands it to the share sheet (returns true → that's the confirmation).
+            var handedToShareSheet = await FileDialogs.PresentSavedFileAsync(path, "GitHub Shine backup");
+            if (!handedToShareSheet)
+                await Toast.SuccessAsync($"Backed up to {path} — contains your tokens, keep it private");
         }
         catch (Exception ex)
         {
