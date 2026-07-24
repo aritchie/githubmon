@@ -13,7 +13,10 @@ public sealed class ConfigStore(
     const string KeyMuted = "muted";
     const string KeyRepoOrder = "repoOrder";
     const string KeyRepoSort = "repoSort";
-    const int DefaultPollSeconds = 60;
+    // A conservative baseline: with ETag conditional requests making unchanged polls essentially
+    // free, and adaptive back-off when the rate-limit budget runs low, this keeps steady-state
+    // API pressure well under control while staying responsive. Users can still lower it (floor 15s).
+    const int DefaultPollSeconds = 120;
 
     IReadOnlyList<MonitoredAccount> accounts = Array.Empty<MonitoredAccount>();
 

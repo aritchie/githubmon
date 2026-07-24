@@ -19,6 +19,16 @@ public sealed record RepoStats(int OpenIssues, int Stars, int Forks, int Watcher
 public sealed record GitUserInfo(string Login);
 
 /// <summary>
+/// Everything a single repo tile needs, fetched together so a provider can minimise round-trips
+/// (GitHub reuses the open-PR list for both the issue-count math and the PR summaries instead of
+/// requesting it twice).
+/// </summary>
+public sealed record RepoSnapshotData(
+    RepoStats Stats,
+    IReadOnlyList<PullRequestSummary> OpenPullRequests,
+    IReadOnlyList<WorkflowRunSummary> RecentWorkflowRuns);
+
+/// <summary>
 /// A repo the current token can access, used to populate the account-edit picker.
 /// </summary>
 public sealed record AccessibleRepo(string Owner, string Name, string? Description, bool Private)
@@ -34,9 +44,11 @@ public sealed record AccessibleRepo(string Owner, string Name, string? Descripti
 /// </summary>
 public interface IGitProvider
 {
-    Task<RepoStats> GetRepoStatsAsync(MonitoredRepo repo, CancellationToken ct = default);
-    Task<IReadOnlyList<PullRequestSummary>> GetOpenPullRequestsAsync(MonitoredRepo repo, CancellationToken ct = default);
-    Task<IReadOnlyList<WorkflowRunSummary>> GetRecentWorkflowRunsAsync(MonitoredRepo repo, int count, CancellationToken ct = default);
+    /// <summary>
+    /// Fetches the stats, open PRs and recent workflow runs for a repo in as few calls as the
+    /// backend allows (see <see cref="RepoSnapshotData"/>).
+    /// </summary>
+    Task<RepoSnapshotData> GetRepoSnapshotAsync(MonitoredRepo repo, int runCount, CancellationToken ct = default);
     Task<IReadOnlyList<InboxItem>> GetInboxAsync(CancellationToken ct = default);
     Task<Stream> DownloadArchiveAsync(MonitoredRepo repo, CancellationToken ct = default);
     Task<GitUserInfo> ValidateAndGetUserAsync(CancellationToken ct = default);

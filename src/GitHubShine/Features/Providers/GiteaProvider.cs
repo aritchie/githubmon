@@ -28,7 +28,18 @@ public sealed class GiteaProvider : IGitProvider
         this.http.DefaultRequestHeaders.UserAgent.ParseAdd("GitHubShine/1.0");
     }
 
-    public async Task<RepoStats> GetRepoStatsAsync(MonitoredRepo repo, CancellationToken ct = default)
+    public async Task<RepoSnapshotData> GetRepoSnapshotAsync(MonitoredRepo repo, int runCount, CancellationToken ct = default)
+    {
+        // Gitea has no combined endpoint, so fan out the three reads concurrently. Each still goes
+        // through the shared HttpClient's ConditionalGetHandler, so unchanged resources are 304s.
+        var statsTask = GetRepoStatsAsync(repo, ct);
+        var prsTask = GetOpenPullRequestsAsync(repo, ct);
+        var runsTask = GetRecentWorkflowRunsAsync(repo, runCount, ct);
+        await Task.WhenAll(statsTask, prsTask, runsTask).ConfigureAwait(false);
+        return new RepoSnapshotData(statsTask.Result, prsTask.Result, runsTask.Result);
+    }
+
+    async Task<RepoStats> GetRepoStatsAsync(MonitoredRepo repo, CancellationToken ct = default)
     {
         using var doc = await GetJsonAsync($"repos/{repo.Owner}/{repo.Name}", ct).ConfigureAwait(false);
         var root = doc.RootElement;
@@ -41,7 +52,7 @@ public sealed class GiteaProvider : IGitProvider
             GetInt(root, "watchers_count"));
     }
 
-    public async Task<IReadOnlyList<PullRequestSummary>> GetOpenPullRequestsAsync(MonitoredRepo repo, CancellationToken ct = default)
+    async Task<IReadOnlyList<PullRequestSummary>> GetOpenPullRequestsAsync(MonitoredRepo repo, CancellationToken ct = default)
     {
         using var doc = await GetJsonAsync($"repos/{repo.Owner}/{repo.Name}/pulls?state=open&limit=50", ct).ConfigureAwait(false);
         var list = new List<PullRequestSummary>();
@@ -58,7 +69,7 @@ public sealed class GiteaProvider : IGitProvider
         return list;
     }
 
-    public async Task<IReadOnlyList<WorkflowRunSummary>> GetRecentWorkflowRunsAsync(MonitoredRepo repo, int count, CancellationToken ct = default)
+    async Task<IReadOnlyList<WorkflowRunSummary>> GetRecentWorkflowRunsAsync(MonitoredRepo repo, int count, CancellationToken ct = default)
     {
         // Gitea Actions is comparatively young and the runs endpoint shape/availability
         // varies by version. Degrade to an empty list on any failure so the rest of the

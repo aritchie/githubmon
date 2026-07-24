@@ -6,15 +6,17 @@ public sealed class PollerInitializer : IMauiInitializeService, IDisposable
 {
     readonly IConfigStore config;
     readonly IMediator mediator;
+    readonly RateLimitMonitor rateLimits;
     readonly ILogger<PollerInitializer> logger;
     CancellationTokenSource? cts;
     Task? loop;
     volatile TaskCompletionSource wakeSignal = NewSignal();
 
-    public PollerInitializer(IConfigStore config, IMediator mediator, ILogger<PollerInitializer> logger)
+    public PollerInitializer(IConfigStore config, IMediator mediator, RateLimitMonitor rateLimits, ILogger<PollerInitializer> logger)
     {
         this.config = config;
         this.mediator = mediator;
+        this.rateLimits = rateLimits;
         this.logger = logger;
     }
 
@@ -37,6 +39,7 @@ public sealed class PollerInitializer : IMauiInitializeService, IDisposable
         await config.ReloadAsync(ct).ConfigureAwait(false);
         config.Changed += OnConfigChanged;
 
+        var firstPass = true;
         while (!ct.IsCancellationRequested)
         {
             // Arm the wake signal BEFORE refreshing so a config change that lands
@@ -44,9 +47,13 @@ public sealed class PollerInitializer : IMauiInitializeService, IDisposable
             wakeSignal = NewSignal();
             var wake = wakeSignal.Task;
 
+            logger.LogDebug("[Poller] cycle force={Force}", !firstPass);
             try
             {
-                await mediator.Send(new RefreshAllCommand(), ct).ConfigureAwait(false);
+                // The first cycle paints instantly from the persistent snapshot cache (Force:false
+                // → cache hit, no network). Every cycle after forces a live refresh — cheap in
+                // practice because ETag conditional requests return 304s that don't cost budget.
+                await mediator.Send(new RefreshAllCommand(Force: !firstPass), ct).ConfigureAwait(false);
             }
             catch (OperationCanceledException) { break; }
             catch (Exception ex)
@@ -54,8 +61,17 @@ public sealed class PollerInitializer : IMauiInitializeService, IDisposable
                 logger.LogWarning(ex, "Refresh cycle failed");
             }
 
+            if (firstPass)
+            {
+                // Immediately follow the cached paint with a live refresh instead of waiting out
+                // the interval.
+                firstPass = false;
+                continue;
+            }
+
             var interval = await config.GetPollIntervalAsync().ConfigureAwait(false);
-            try { await Task.WhenAny(Task.Delay(interval, ct), wake).ConfigureAwait(false); }
+            var delay = rateLimits.NextDelay(interval);
+            try { await Task.WhenAny(Task.Delay(delay, ct), wake).ConfigureAwait(false); }
             catch (OperationCanceledException) { break; }
         }
     }

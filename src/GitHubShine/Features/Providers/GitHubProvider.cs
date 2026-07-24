@@ -1,4 +1,5 @@
 using Octokit;
+using Octokit.Internal;
 
 namespace GitHubShine.Providers;
 
@@ -15,41 +16,51 @@ public sealed class GitHubProvider : IGitProvider
     readonly GitHubClient client;
     readonly string accountId;
 
-    public GitHubProvider(string? hostUrl, string token, string accountId)
+    public GitHubProvider(string? hostUrl, string token, string accountId, RateLimitMonitor rateLimits, ILogger etagLogger)
     {
         this.accountId = accountId;
-        this.client = string.IsNullOrWhiteSpace(hostUrl)
-            ? new GitHubClient(Product)
-            : new GitHubClient(Product, new Uri(hostUrl));
-        this.client.Credentials = new Credentials(token);
+
+        // Build the Octokit connection over a ConditionalGetHandler so every request carries
+        // If-None-Match and unchanged resources come back as free 304s (see the handler for why
+        // that matters to the rate limit). Octokit has no built-in ETag support, so we own the
+        // HTTP pipeline here rather than using the convenience GitHubClient constructors.
+        var baseAddress = string.IsNullOrWhiteSpace(hostUrl) ? GitHubClient.GitHubApiUrl : new Uri(hostUrl);
+        var handler = new ConditionalGetHandler(new HttpClientHandler(), rateLimits, etagLogger);
+        var httpClient = new HttpClientAdapter(() => handler);
+        var connection = new Connection(
+            Product,
+            baseAddress,
+            new InMemoryCredentialStore(new Credentials(token)),
+            httpClient,
+            new SimpleJsonSerializer());
+
+        this.client = new GitHubClient(connection);
     }
 
-    public async Task<RepoStats> GetRepoStatsAsync(MonitoredRepo repo, CancellationToken ct = default)
+    public async Task<RepoSnapshotData> GetRepoSnapshotAsync(MonitoredRepo repo, int runCount, CancellationToken ct = default)
     {
-        // Fetch the repo and the open-PR count in parallel; GitHub's OpenIssuesCount
-        // includes PRs, so subtract them to get a true issue count (as the old handler did).
+        // One fan-out of three calls: repo, open PRs, recent runs. The PR list is reused for both
+        // the issue-count math (GitHub's OpenIssuesCount includes PRs, so subtract them) and the
+        // PR summaries — that's one fewer call per repo per poll than fetching PRs twice.
         var repoTask = client.Repository.Get(repo.Owner, repo.Name);
         var prsTask = client.PullRequest.GetAllForRepository(repo.Owner, repo.Name, new PullRequestRequest
         {
             State = ItemStateFilter.Open
         });
-        await Task.WhenAll(repoTask, prsTask).ConfigureAwait(false);
+        var runsTask = client.Actions.Workflows.Runs
+            .List(repo.Owner, repo.Name, new WorkflowRunsRequest(), new ApiOptions { PageSize = runCount, PageCount = 1 });
+        await Task.WhenAll(repoTask, prsTask, runsTask).ConfigureAwait(false);
 
         var r = repoTask.Result;
-        return new RepoStats(
-            Math.Max(0, r.OpenIssuesCount - prsTask.Result.Count),
+        var prs = prsTask.Result;
+
+        var stats = new RepoStats(
+            Math.Max(0, r.OpenIssuesCount - prs.Count),
             r.StargazersCount,
             r.ForksCount,
             r.SubscribersCount);
-    }
 
-    public async Task<IReadOnlyList<PullRequestSummary>> GetOpenPullRequestsAsync(MonitoredRepo repo, CancellationToken ct = default)
-    {
-        var prs = await client.PullRequest
-            .GetAllForRepository(repo.Owner, repo.Name, new PullRequestRequest { State = ItemStateFilter.Open })
-            .ConfigureAwait(false);
-
-        return prs
+        var prSummaries = prs
             .Select(p => new PullRequestSummary(
                 p.Number,
                 p.Title,
@@ -58,24 +69,19 @@ public sealed class GitHubProvider : IGitProvider
                 p.Draft,
                 p.Mergeable ?? false))
             .ToArray();
-    }
 
-    public async Task<IReadOnlyList<WorkflowRunSummary>> GetRecentWorkflowRunsAsync(MonitoredRepo repo, int count, CancellationToken ct = default)
-    {
-        var runs = await client.Actions.Workflows.Runs
-            .List(repo.Owner, repo.Name, new WorkflowRunsRequest(), new ApiOptions { PageSize = count, PageCount = 1 })
-            .ConfigureAwait(false);
-
-        return runs.WorkflowRuns
-            .Select(r => new WorkflowRunSummary(
-                r.Id,
-                r.Name ?? "(workflow)",
-                r.HeadBranch ?? "?",
-                r.Status.ToString() ?? "unknown",
-                r.Conclusion?.ToString(),
-                r.CreatedAt,
-                r.HtmlUrl ?? string.Empty))
+        var runSummaries = runsTask.Result.WorkflowRuns
+            .Select(run => new WorkflowRunSummary(
+                run.Id,
+                run.Name ?? "(workflow)",
+                run.HeadBranch ?? "?",
+                run.Status.ToString() ?? "unknown",
+                run.Conclusion?.ToString(),
+                run.CreatedAt,
+                run.HtmlUrl ?? string.Empty))
             .ToArray();
+
+        return new RepoSnapshotData(stats, prSummaries, runSummaries);
     }
 
     public async Task<IReadOnlyList<InboxItem>> GetInboxAsync(CancellationToken ct = default)

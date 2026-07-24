@@ -1,7 +1,6 @@
 <Project>
 
     <PropertyGroup>
-        <MauiVersion>10.0.80</MauiVersion>
         <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
         <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
         <LangVersion>latest</LangVersion>

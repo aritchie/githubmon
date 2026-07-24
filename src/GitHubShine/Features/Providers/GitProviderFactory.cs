@@ -5,8 +5,10 @@ using Shiny;
 namespace GitHubShine.Providers;
 
 [Singleton]
-public sealed class GitProviderFactory(ITokenVault vault) : IGitProviderFactory
+public sealed class GitProviderFactory(ITokenVault vault, RateLimitMonitor rateLimits, ILoggerFactory loggerFactory) : IGitProviderFactory
 {
+    readonly ILogger etagLogger = loggerFactory.CreateLogger("GitHubShine.Providers.ConditionalGet");
+
     readonly ConcurrentDictionary<string, IGitProvider> cache = new();
 
     public async Task<IGitProvider?> CreateAsync(MonitoredAccount account, CancellationToken ct = default)
@@ -27,9 +29,12 @@ public sealed class GitProviderFactory(ITokenVault vault) : IGitProviderFactory
         => type switch
         {
             // A dedicated long-lived HttpClient per Gitea provider — providers are cached
-            // per-account, so this is one client per account, not per-request.
-            GitProviderType.Gitea => new GiteaProvider(new HttpClient(), hostUrl, token, accountId),
-            _ => new GitHubProvider(hostUrl, token, accountId)
+            // per-account, so this is one client per account, not per-request. Its pipeline runs
+            // through ConditionalGetHandler for ETag/304 savings and rate-limit tracking.
+            GitProviderType.Gitea => new GiteaProvider(
+                new HttpClient(new ConditionalGetHandler(new HttpClientHandler(), rateLimits, etagLogger)),
+                hostUrl, token, accountId),
+            _ => new GitHubProvider(hostUrl, token, accountId, rateLimits, etagLogger)
         };
 
     public void Invalidate(string accountId) => cache.TryRemove(accountId, out _);
