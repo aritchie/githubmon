@@ -11,6 +11,7 @@
             <span class="subtitle">Connect GitHub accounts using fine-grained personal access tokens.</span>
         </div>
         <span class="spacer"></span>
+        <button class="btn" @onclick="@(() => Nav.NavigateTo("/accounts/repos"))">All repositories…</button>
         <button class="btn primary" @onclick="@(() => Nav.NavigateTo("/accounts/edit"))">+ Add account</button>
     </div>
 

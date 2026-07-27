@@ -1,0 +1,340 @@
+@page "/accounts/repos"
+@inject IConfigStore Config
+@inject IGitProviderFactory Factory
+@inject NavigationManager Nav
+@inject IToastService Toast
+
+<div class="page narrow">
+    <div class="page-header">
+        <div>
+            <h1>All repositories</h1>
+            <span class="subtitle">Every repo your tokens can reach, across every account, with what you're monitoring ticked.</span>
+        </div>
+        <span class="spacer"></span>
+        <button class="btn" @onclick="@(() => Nav.NavigateTo("/accounts"))">Accounts</button>
+    </div>
+
+    @if (Config.Accounts.Count == 0)
+    {
+        <div class="card empty-state">
+            <h2>No accounts yet</h2>
+            <p>Connect an account and its repositories will show up here.</p>
+            <button class="btn primary" @onclick="@(() => Nav.NavigateTo("/accounts/edit"))">+ Add an account</button>
+        </div>
+    }
+    else
+    {
+        <div class="card">
+            <div class="page-header" style="margin-bottom:10px;">
+                <div>
+                    <h2>@SelectedCount monitored</h2>
+                    <span class="subtitle">of @rows.Count repos across @Config.Accounts.Count account@(Config.Accounts.Count == 1 ? "" : "s")</span>
+                </div>
+                <span class="spacer"></span>
+                <button class="btn" @onclick="SelectAllVisible" disabled="@isSaving">Select all shown</button>
+                <button class="btn" @onclick="ClearVisible" disabled="@isSaving">Clear shown</button>
+            </div>
+
+            @* Per-account load state — one slow or token-less account must not hide the rest. *@
+            <div class="pills" style="margin-bottom:10px;">
+                @foreach (var account in Config.Accounts)
+                {
+                    var state = LoadStateFor(account.Id);
+                    <span title="@LoadMessageFor(account.Id)">
+                        @if (state == LoadState.Loading)
+                        {
+                            <Pill Text="@($"{account.Label} — loading…")" Type="PillType.Info" />
+                        }
+                        else if (state == LoadState.Failed)
+                        {
+                            <Pill Text="@($"{account.Label} — failed")" Type="PillType.Critical" />
+                        }
+                        else if (state == LoadState.NoToken)
+                        {
+                            <Pill Text="@($"{account.Label} — no token")" Type="PillType.Warning" />
+                        }
+                        else
+                        {
+                            <Pill Text="@($"{account.Label} — {CountFor(account.Id)}")" Type="PillType.Success" />
+                        }
+                    </span>
+                }
+            </div>
+
+            <div class="repo-pick-toolbar">
+                <input type="search" value="@filterText" @oninput="OnFilterChanged"
+                       placeholder="Filter by repo name or description…" />
+                <select value="@accountFilter" @onchange="OnAccountFilterChanged">
+                    <option value="">All accounts</option>
+                    @foreach (var account in Config.Accounts)
+                    {
+                        <option value="@account.Id">@account.Label</option>
+                    }
+                </select>
+                <label class="muted" style="display:flex; align-items:center; gap:6px;">
+                    <input type="checkbox" checked="@monitoredOnly" @onchange="OnMonitoredOnlyChanged" />
+                    Monitored only
+                </label>
+            </div>
+
+            <div class="repo-pick-list">
+                @if (Filtered.Count == 0)
+                {
+                    <div class="repo-pick-row"><span class="muted">No repos match the filter.</span></div>
+                }
+                @foreach (var row in Filtered)
+                {
+                    <label class="repo-pick-row" @key="row.Key">
+                        <input type="checkbox" checked="@row.Selected" disabled="@isSaving"
+                               @onchange="e => row.Selected = (bool)e.Value!" />
+                        <span class="name">@row.FullName</span>
+                        <span class="desc">@row.AccountLabel@(row.Description is null ? "" : " · " + row.Description)</span>
+                        <span class="badge">
+                            @if (!row.VisibleToToken)
+                            {
+                                <Pill Text="Not visible to token" Type="PillType.Warning" />
+                            }
+                            else if (row.Private)
+                            {
+                                <Pill Text="Private" Type="PillType.Info" />
+                            }
+                        </span>
+                    </label>
+                }
+            </div>
+        </div>
+
+        <div class="actions-bar">
+            <span class="status">
+                @if (pendingChanges > 0)
+                {
+                    <text>@pendingChanges unsaved change@(pendingChanges == 1 ? "" : "s")</text>
+                }
+                @errorMessage
+            </span>
+            @if (isSaving)
+            {
+                <span class="spinner"></span>
+            }
+            <button class="btn" @onclick="ReloadAsync" disabled="@isSaving">Refresh</button>
+            <button class="btn primary" @onclick="SaveAsync" disabled="@isSaving">Save</button>
+        </div>
+    }
+</div>
+
+@code {
+    enum LoadState { Loading, Loaded, Failed, NoToken }
+
+    sealed class RepoRow
+    {
+        public required string AccountId { get; init; }
+        public required string AccountLabel { get; init; }
+        public required string Owner { get; init; }
+        public required string Name { get; init; }
+        public string FullName => $"{this.Owner}/{this.Name}";
+        public string Key => $"{this.AccountId}|{this.FullName}";
+        public string? Description { get; set; }
+        public bool Private { get; set; }
+
+        /// <summary>False for a monitored repo the account's token can no longer see.</summary>
+        public bool VisibleToToken { get; set; } = true;
+
+        public bool Selected { get; set; }
+        public bool OriginallySelected { get; set; }
+        public bool IsChanged => this.Selected != this.OriginallySelected;
+    }
+
+    readonly List<RepoRow> rows = new();
+    readonly Dictionary<string, LoadState> loadStates = new();
+    readonly Dictionary<string, string> loadMessages = new();
+
+    string filterText = "";
+    string accountFilter = "";
+    bool monitoredOnly;
+    bool isSaving;
+    string? errorMessage;
+
+    int SelectedCount => rows.Count(r => r.Selected);
+    int pendingChanges => rows.Count(r => r.IsChanged);
+
+    LoadState LoadStateFor(string accountId) => loadStates.TryGetValue(accountId, out var s) ? s : LoadState.Loading;
+    string LoadMessageFor(string accountId) => loadMessages.TryGetValue(accountId, out var m) ? m : "";
+    int CountFor(string accountId) => rows.Count(r => r.AccountId == accountId);
+
+    List<RepoRow> Filtered
+    {
+        get
+        {
+            IEnumerable<RepoRow> query = rows;
+            if (!string.IsNullOrEmpty(accountFilter))
+                query = query.Where(r => r.AccountId == accountFilter);
+            if (monitoredOnly)
+                query = query.Where(r => r.Selected);
+            if (!string.IsNullOrWhiteSpace(filterText))
+            {
+                var f = filterText.Trim();
+                query = query.Where(r =>
+                    r.FullName.Contains(f, StringComparison.OrdinalIgnoreCase) ||
+                    (r.Description?.Contains(f, StringComparison.OrdinalIgnoreCase) ?? false));
+            }
+            return query.ToList();
+        }
+    }
+
+    protected override async Task OnInitializedAsync() => await ReloadAsync();
+
+    async Task ReloadAsync()
+    {
+        errorMessage = null;
+        await Config.ReloadAsync();
+
+        // Paint the monitored repos immediately so the page is usable before any network call
+        // lands (and stays usable if a token is missing or a host is unreachable).
+        rows.Clear();
+        loadStates.Clear();
+        loadMessages.Clear();
+        foreach (var account in Config.Accounts)
+        {
+            loadStates[account.Id] = LoadState.Loading;
+            foreach (var repo in account.Repos)
+            {
+                rows.Add(new RepoRow
+                {
+                    AccountId = account.Id,
+                    AccountLabel = account.Label,
+                    Owner = repo.Owner,
+                    Name = repo.Name,
+                    Selected = true,
+                    OriginallySelected = true
+                });
+            }
+        }
+        StateHasChanged();
+
+        // Every account fetched concurrently; each merges in as it finishes.
+        await Task.WhenAll(Config.Accounts.Select(LoadAccountAsync));
+    }
+
+    async Task LoadAccountAsync(MonitoredAccount account)
+    {
+        try
+        {
+            var provider = await Factory.CreateAsync(account);
+            if (provider is null)
+            {
+                loadStates[account.Id] = LoadState.NoToken;
+                loadMessages[account.Id] = "No access token is saved for this account.";
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            var fetched = await provider.ListAccessibleReposAsync();
+
+            var existing = rows
+                .Where(r => r.AccountId == account.Id)
+                .ToDictionary(r => r.FullName, StringComparer.OrdinalIgnoreCase);
+
+            foreach (var repo in fetched)
+            {
+                if (existing.TryGetValue(repo.FullName, out var row))
+                {
+                    row.Description = repo.Description;
+                    row.Private = repo.Private;
+                    row.VisibleToToken = true;
+                }
+                else
+                {
+                    rows.Add(new RepoRow
+                    {
+                        AccountId = account.Id,
+                        AccountLabel = account.Label,
+                        Owner = repo.Owner,
+                        Name = repo.Name,
+                        Description = repo.Description,
+                        Private = repo.Private,
+                        VisibleToToken = true,
+                        Selected = false,
+                        OriginallySelected = false
+                    });
+                }
+            }
+
+            // Anything monitored that the token didn't return is flagged rather than dropped, so
+            // saving can't silently stop monitoring a repo the token merely lost sight of.
+            var live = fetched.Select(r => r.FullName).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            foreach (var row in rows.Where(r => r.AccountId == account.Id && !live.Contains(r.FullName)))
+                row.VisibleToToken = false;
+
+            loadStates[account.Id] = LoadState.Loaded;
+            Sort();
+        }
+        catch (Exception ex)
+        {
+            loadStates[account.Id] = LoadState.Failed;
+            loadMessages[account.Id] = ex.Message;
+        }
+        await InvokeAsync(StateHasChanged);
+    }
+
+    void Sort() => rows.Sort((a, b) =>
+    {
+        var byRepo = string.Compare(a.FullName, b.FullName, StringComparison.OrdinalIgnoreCase);
+        return byRepo != 0 ? byRepo : string.Compare(a.AccountLabel, b.AccountLabel, StringComparison.OrdinalIgnoreCase);
+    });
+
+    void OnFilterChanged(ChangeEventArgs e) => filterText = e.Value?.ToString() ?? "";
+    void OnAccountFilterChanged(ChangeEventArgs e) => accountFilter = e.Value?.ToString() ?? "";
+    void OnMonitoredOnlyChanged(ChangeEventArgs e) => monitoredOnly = (bool)e.Value!;
+
+    void SelectAllVisible()
+    {
+        foreach (var row in Filtered)
+            row.Selected = true;
+    }
+
+    void ClearVisible()
+    {
+        foreach (var row in Filtered)
+            row.Selected = false;
+    }
+
+    async Task SaveAsync()
+    {
+        isSaving = true;
+        errorMessage = null;
+        var changedAccounts = 0;
+        try
+        {
+            foreach (var account in Config.Accounts)
+            {
+                var accountRows = rows.Where(r => r.AccountId == account.Id).ToList();
+                if (!accountRows.Any(r => r.IsChanged))
+                    continue;
+
+                var repos = accountRows
+                    .Where(r => r.Selected)
+                    .Select(r => new MonitoredRepo(r.Owner, r.Name))
+                    .ToList();
+
+                await Config.UpsertAccountAsync(account with { Repos = repos });
+                changedAccounts++;
+            }
+
+            foreach (var row in rows)
+                row.OriginallySelected = row.Selected;
+
+            if (changedAccounts == 0)
+                await Toast.InfoAsync("Nothing to save");
+            else
+                await Toast.SuccessAsync($"Updated {changedAccounts} account{(changedAccounts == 1 ? "" : "s")} — now monitoring {SelectedCount} repos");
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Save failed: {ex.Message}";
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+}

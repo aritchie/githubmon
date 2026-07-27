@@ -1,0 +1,400 @@
+@page "/sync/edit"
+@page "/sync/edit/{Id}"
+@inject ISyncStore SyncStore
+@inject IConfigStore Config
+@inject IGitProviderFactory Factory
+@inject NavigationManager Nav
+@inject IToastService Toast
+
+<div class="page narrow">
+    <div class="page-header">
+        <div>
+            <h1>Sync</h1>
+            <span class="subtitle">Copy a monitored repo to another server and keep it caught up.</span>
+        </div>
+    </div>
+
+    @if (Config.Accounts.Count < 1)
+    {
+        <div class="card empty-state">
+            <h2>No accounts yet</h2>
+            <p>Add at least one account — and the repos you want to sync — before setting up a sync.</p>
+            <button class="btn primary" @onclick="@(() => Nav.NavigateTo("/accounts/edit"))">+ Add an account</button>
+        </div>
+    }
+    else
+    {
+        <div class="card">
+            <div class="section-title">Source</div>
+
+            <div class="field">
+                <label>Account</label>
+                <select value="@sourceAccountId" @onchange="OnSourceAccountChanged">
+                    @foreach (var account in Config.Accounts)
+                    {
+                        <option value="@account.Id">@account.Label (@account.Repos.Count repos)</option>
+                    }
+                </select>
+            </div>
+
+            <div class="field">
+                <label>
+                    Repository
+                    <span class="hint">— only repos linked to the account above can be synced</span>
+                </label>
+                @if (SourceRepos.Count == 0)
+                {
+                    <div class="hint">This account has no monitored repos. Add some on its account page first.</div>
+                }
+                else
+                {
+                    <select value="@sourceRepoFullName" @onchange="OnSourceRepoChanged">
+                        @foreach (var repo in SourceRepos)
+                        {
+                            <option value="@repo.FullName">@repo.FullName</option>
+                        }
+                    </select>
+                }
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="section-title">Target</div>
+
+            <div class="field">
+                <label>Account</label>
+                <select value="@targetAccountId" @onchange="OnTargetAccountChanged">
+                    @foreach (var account in Config.Accounts)
+                    {
+                        <option value="@account.Id">@account.Label</option>
+                    }
+                </select>
+            </div>
+
+            <div class="field">
+                <label>
+                    Owner
+                    <span class="hint">— the user or organisation on the target server</span>
+                </label>
+                <input type="text" @bind="targetOwner" placeholder="@(TargetAccount?.Username ?? "owner")" />
+            </div>
+
+            <div class="field">
+                <label>
+                    Repository name
+                    <span class="hint">— leave blank to reuse the source name</span>
+                </label>
+                <input type="text" @bind="targetName" placeholder="@SourceRepoName" />
+            </div>
+
+            <div class="hint">
+                If <strong>@TargetPreview</strong> doesn't exist it will be created, copying the source's
+                description and public/private visibility.
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="section-title">Branches</div>
+
+            <div class="field">
+                <label>What to push</label>
+                <select value="@branchMode" @onchange="OnBranchModeChanged">
+                    <option value="@SyncBranchMode.DefaultBranch">Default branch only</option>
+                    <option value="@SyncBranchMode.Named">Specific branches…</option>
+                    <option value="@SyncBranchMode.All">All branches</option>
+                </select>
+            </div>
+
+            @if (branchMode == SyncBranchMode.Named)
+            {
+                <div class="repo-pick-toolbar">
+                    <button class="btn" @onclick="LoadBranchesAsync" disabled="@isLoadingBranches">Load branches</button>
+                    @if (isLoadingBranches)
+                    {
+                        <span class="spinner"></span>
+                    }
+                    <span class="muted">@branches.Count(b => b.Selected) selected</span>
+                </div>
+
+                @if (branches.Count == 0)
+                {
+                    <div class="hint">Click "Load branches" to list the branches on @sourceRepoFullName.</div>
+                }
+                else
+                {
+                    <div class="repo-pick-list">
+                        @foreach (var branch in branches)
+                        {
+                            <label class="repo-pick-row" @key="branch.Name">
+                                <input type="checkbox" checked="@branch.Selected"
+                                       @onchange="e => branch.Selected = (bool)e.Value!" />
+                                <span class="name">@branch.Name</span>
+                                <span class="badge">
+                                    @if (!branch.OnSource)
+                                    {
+                                        <Pill Text="Not on source" Type="PillType.Warning" />
+                                    }
+                                </span>
+                            </label>
+                        }
+                    </div>
+                }
+            }
+
+            <div class="field" style="margin-top:12px;">
+                <label>
+                    <input type="checkbox" @bind="includeTags" />
+                    Include tags
+                </label>
+            </div>
+
+            <div class="field">
+                <label>
+                    <input type="checkbox" @bind="force" />
+                    Force-update refs on the target
+                </label>
+                <div class="hint">
+                    Off by default: a target that has diverged fails loudly instead of losing commits.
+                    Turn this on to make the target match the source exactly — with <em>All branches</em>
+                    it also <strong>deletes</strong> target branches the source no longer has.
+                </div>
+            </div>
+        </div>
+
+        <div class="actions-bar">
+            <span class="status">@errorMessage</span>
+            <button class="btn" @onclick="@(() => Nav.NavigateTo("/sync"))">Cancel</button>
+            <button class="btn primary" @onclick="SaveAsync" disabled="@isSaving">Save sync</button>
+        </div>
+    }
+</div>
+
+@code {
+    sealed class BranchChoice(string name, bool selected, bool onSource)
+    {
+        public string Name { get; } = name;
+        public bool Selected { get; set; } = selected;
+
+        /// <summary>False for a saved branch that the source no longer has — kept visible so it can be unticked.</summary>
+        public bool OnSource { get; set; } = onSource;
+    }
+
+    [Parameter] public string? Id { get; set; }
+
+    string sourceAccountId = "";
+    string sourceRepoFullName = "";
+    string targetAccountId = "";
+    string targetOwner = "";
+    string targetName = "";
+    SyncBranchMode branchMode = SyncBranchMode.DefaultBranch;
+    bool includeTags = true;
+    bool force;
+    bool isLoadingBranches;
+    bool isSaving;
+    string? errorMessage;
+
+    readonly List<BranchChoice> branches = new();
+
+    MonitoredAccount? SourceAccount => Config.Accounts.FirstOrDefault(a => a.Id == sourceAccountId);
+    MonitoredAccount? TargetAccount => Config.Accounts.FirstOrDefault(a => a.Id == targetAccountId);
+    IReadOnlyList<MonitoredRepo> SourceRepos => SourceAccount?.Repos ?? (IReadOnlyList<MonitoredRepo>)Array.Empty<MonitoredRepo>();
+
+    string SourceRepoName => sourceRepoFullName.Split('/').LastOrDefault() ?? "";
+
+    string TargetPreview
+    {
+        get
+        {
+            var owner = string.IsNullOrWhiteSpace(targetOwner) ? (TargetAccount?.Username ?? "owner") : targetOwner.Trim();
+            var name = string.IsNullOrWhiteSpace(targetName) ? SourceRepoName : targetName.Trim();
+            return $"{owner}/{name}";
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Config.ReloadAsync();
+        await SyncStore.ReloadAsync();
+
+        var existing = Id is null ? null : SyncStore.Mappings.FirstOrDefault(m => m.Id == Id);
+        if (existing is not null)
+        {
+            sourceAccountId = existing.SourceAccountId;
+            sourceRepoFullName = existing.Source.FullName;
+            targetAccountId = existing.TargetAccountId;
+            targetOwner = existing.TargetOwner;
+            targetName = existing.TargetName ?? "";
+            branchMode = existing.BranchMode;
+            includeTags = existing.IncludeTags;
+            force = existing.Force;
+
+            // Show the saved branches immediately; "Load branches" merges in the live list.
+            foreach (var branch in existing.Branches ?? new List<string>())
+                branches.Add(new BranchChoice(branch, selected: true, onSource: true));
+        }
+        else
+        {
+            var first = Config.Accounts.FirstOrDefault(a => a.Repos.Count > 0) ?? Config.Accounts.FirstOrDefault();
+            sourceAccountId = first?.Id ?? "";
+            sourceRepoFullName = first?.Repos.FirstOrDefault()?.FullName ?? "";
+
+            // Default the target to a different account when there is one — the common case is
+            // pushing from a hosted account to a self-hosted backup server.
+            var target = Config.Accounts.FirstOrDefault(a => a.Id != sourceAccountId) ?? first;
+            targetAccountId = target?.Id ?? "";
+            targetOwner = target?.Username ?? "";
+        }
+    }
+
+    void OnSourceAccountChanged(ChangeEventArgs e)
+    {
+        sourceAccountId = e.Value?.ToString() ?? "";
+        sourceRepoFullName = SourceRepos.FirstOrDefault()?.FullName ?? "";
+        branches.Clear();
+    }
+
+    void OnSourceRepoChanged(ChangeEventArgs e)
+    {
+        sourceRepoFullName = e.Value?.ToString() ?? "";
+        branches.Clear();
+    }
+
+    void OnTargetAccountChanged(ChangeEventArgs e)
+    {
+        targetAccountId = e.Value?.ToString() ?? "";
+        if (string.IsNullOrWhiteSpace(targetOwner))
+            targetOwner = TargetAccount?.Username ?? "";
+    }
+
+    void OnBranchModeChanged(ChangeEventArgs e)
+        => branchMode = Enum.TryParse<SyncBranchMode>(e.Value?.ToString(), out var mode) ? mode : SyncBranchMode.DefaultBranch;
+
+    async Task LoadBranchesAsync()
+    {
+        if (SourceAccount is not { } account || !TryParseSourceRepo(out var repo))
+        {
+            errorMessage = "Pick a source account and repository first";
+            return;
+        }
+
+        isLoadingBranches = true;
+        errorMessage = null;
+        try
+        {
+            var provider = await Factory.CreateAsync(account);
+            if (provider is null)
+            {
+                errorMessage = $"No access token is saved for {account.Label}";
+                return;
+            }
+
+            var fetched = await provider.ListBranchesAsync(repo);
+
+            // Preserve ticks (including for branches the source has since dropped) while
+            // rebuilding the list from what the API actually reports.
+            var selected = branches.Where(b => b.Selected).Select(b => b.Name).ToHashSet(StringComparer.Ordinal);
+            branches.Clear();
+            foreach (var name in fetched.OrderBy(n => n, StringComparer.OrdinalIgnoreCase))
+                branches.Add(new BranchChoice(name, selected.Contains(name), onSource: true));
+
+            var live = fetched.ToHashSet(StringComparer.Ordinal);
+            foreach (var name in selected.Where(n => !live.Contains(n)))
+                branches.Add(new BranchChoice(name, selected: true, onSource: false));
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Couldn't list branches: {ex.Message}";
+        }
+        finally
+        {
+            isLoadingBranches = false;
+        }
+    }
+
+    bool TryParseSourceRepo(out MonitoredRepo repo)
+    {
+        var parts = sourceRepoFullName.Split('/', 2);
+        if (parts.Length == 2 && parts[0].Length > 0 && parts[1].Length > 0)
+        {
+            repo = new MonitoredRepo(parts[0], parts[1]);
+            return true;
+        }
+        repo = new MonitoredRepo("", "");
+        return false;
+    }
+
+    async Task SaveAsync()
+    {
+        errorMessage = null;
+
+        if (!TryParseSourceRepo(out var source))
+        {
+            errorMessage = "Pick a source repository";
+            return;
+        }
+        if (TargetAccount is null)
+        {
+            errorMessage = "Pick a target account";
+            return;
+        }
+
+        var owner = string.IsNullOrWhiteSpace(targetOwner) ? TargetAccount.Username : targetOwner.Trim();
+        if (string.IsNullOrWhiteSpace(owner))
+        {
+            errorMessage = "Enter the owner (user or organisation) on the target server";
+            return;
+        }
+
+        var name = string.IsNullOrWhiteSpace(targetName) ? source.Name : targetName.Trim();
+        var selectedBranches = branches.Where(b => b.Selected).Select(b => b.Name).ToList();
+
+        if (branchMode == SyncBranchMode.Named && selectedBranches.Count == 0)
+        {
+            errorMessage = "Select at least one branch, or switch to default/all";
+            return;
+        }
+
+        // Pushing a repo onto itself would be a no-op at best and a self-referential fetch loop
+        // at worst — catch it before the engine gets a chance to try.
+        if (targetAccountId == sourceAccountId &&
+            string.Equals(owner, source.Owner, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(name, source.Name, StringComparison.OrdinalIgnoreCase))
+        {
+            errorMessage = "The target is the same repo as the source — change the account, owner or name";
+            return;
+        }
+
+        isSaving = true;
+        try
+        {
+            // Carry the last-run bookkeeping across an edit so the list doesn't reset to "Never run".
+            var previous = Id is null ? null : SyncStore.Mappings.FirstOrDefault(m => m.Id == Id);
+
+            var mapping = new SyncMapping(
+                Id ?? Guid.NewGuid().ToString("n"),
+                sourceAccountId,
+                source,
+                targetAccountId,
+                owner!,
+                string.Equals(name, source.Name, StringComparison.Ordinal) ? null : name,
+                branchMode,
+                branchMode == SyncBranchMode.Named ? selectedBranches : null,
+                includeTags,
+                force,
+                previous?.LastSyncedUtc,
+                previous?.LastResult);
+
+            await SyncStore.UpsertAsync(mapping);
+            await Toast.SuccessAsync($"Saved sync {source.FullName} → {mapping.TargetFullName}");
+            Nav.NavigateTo("/sync");
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Save failed: {ex.Message}";
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+}

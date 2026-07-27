@@ -80,6 +80,20 @@ public static class MauiProgram
 #endif
         builder.Services.AddSingleton(Browser.Default);
 
+        // Shiny resolves INotificationManager through Shiny.IPlatform. That binding normally comes
+        // from Shiny.Hosting.Maui's UseShiny(), but that package ships no net10.0-macos asset — on
+        // this app's macOS head it resolves the platform-less net10.0 build and registers nothing,
+        // so INotificationManager failed to construct and notifications never worked. Register the
+        // per-head platform type directly; each one is a parameterless public type.
+#if MACOS
+        builder.Services.AddSingleton<Shiny.IPlatform, Shiny.MacPlatform>();
+#elif IOS
+        builder.Services.AddSingleton<Shiny.IPlatform, Shiny.IosPlatform>();
+#elif ANDROID
+        builder.Services.AddSingleton<Shiny.IPlatform, Shiny.AndroidPlatform>();
+#elif WINDOWS
+        builder.Services.AddSingleton<Shiny.IPlatform, Shiny.WindowsPlatform>();
+#endif
         builder.Services.AddNotifications();
 
         builder.Services.AddShinyMediator(cfg => cfg
@@ -104,6 +118,7 @@ public static class MauiProgram
             options.MapTypeToTable<SeenFailedRun>();
             options.MapTypeToTable<SeenInboxItem>();
             options.MapTypeToTable<DashboardPrefs>();
+            options.MapTypeToTable<SyncMapping>();
         });
 
         // [Singleton]-attributed services (ConfigStore, SecureTokenVault,
@@ -115,6 +130,7 @@ public static class MauiProgram
         builder.Services.AddSingletonAsImplementedInterfaces<TrayIconHost>();
 #endif
         builder.Services.AddSingletonAsImplementedInterfaces<PollerInitializer>();
+        builder.Services.AddSingletonAsImplementedInterfaces<NotificationAccessInitializer>();
 
 #if MACOS
         builder.Services.AddSingleton<IFileDialogs, GitHubShine.Platforms.MacOS.MacFileDialogs>();

@@ -1,0 +1,289 @@
+@page "/sync"
+@implements IDisposable
+@inject ISyncStore SyncStore
+@inject IConfigStore Config
+@inject IRepoSyncEngine Engine
+@inject IGitCli Git
+@inject NavigationManager Nav
+@inject IToastService Toast
+
+<div class="page narrow">
+    <div class="page-header">
+        <div>
+            <h1>Sync</h1>
+            <span class="subtitle">Mirror a monitored repo to another server — creates the target repo if it's missing, then pushes whatever commits it's behind by.</span>
+        </div>
+        <span class="spacer"></span>
+        <button class="btn" @onclick="@(() => Nav.NavigateTo("/sync/edit"))" disabled="@isBusy">+ Add sync</button>
+        <button class="btn primary" @onclick="@(() => Nav.NavigateTo("/sync/bulk"))" disabled="@isBusy">Bulk add…</button>
+    </div>
+
+    @if (gitMissing)
+    {
+        <div class="card sync-warning">
+            <strong>git isn't available</strong>
+            <div class="meta">@gitMessage</div>
+        </div>
+    }
+
+    @if (rows.Count == 0)
+    {
+        <div class="card empty-state">
+            <h2>No syncs configured</h2>
+            <p>Pick repos you already monitor and a destination account — for example, backing up your GitHub repos onto a self-hosted Gitea server.</p>
+            <div class="pills">
+                <button class="btn primary" @onclick="@(() => Nav.NavigateTo("/sync/bulk"))">Bulk add many repos…</button>
+                <button class="btn" @onclick="@(() => Nav.NavigateTo("/sync/edit"))">+ Add one</button>
+            </div>
+        </div>
+    }
+    else
+    {
+        <div class="card">
+            <div class="repo-pick-toolbar">
+                <span class="muted">@rows.Count sync@(rows.Count == 1 ? "" : "s") configured</span>
+                <span class="spacer" style="flex:1;"></span>
+                @if (isBusy)
+                {
+                    <span class="spinner"></span>
+                    <button class="btn danger" @onclick="Cancel">Cancel</button>
+                }
+                else
+                {
+                    <button class="btn primary" @onclick="RunAllAsync">Run all</button>
+                }
+            </div>
+        </div>
+
+        @foreach (var row in rows)
+        {
+            <div class="card sync-row" @key="row.Mapping.Id">
+                <div class="sync-body">
+                    <div class="sync-route">
+                        <strong>@row.Mapping.Source.FullName</strong>
+                        <span class="sync-arrow">→</span>
+                        <strong>@row.Mapping.TargetFullName</strong>
+                    </div>
+                    <div class="meta">
+                        @AccountLabel(row.Mapping.SourceAccountId) → @AccountLabel(row.Mapping.TargetAccountId)
+                        · @row.Mapping.BranchSummary
+                        @if (row.Mapping.IncludeTags)
+                        {
+                            <text> · tags</text>
+                        }
+                        @if (row.Mapping.Force)
+                        {
+                            <text> · force</text>
+                        }
+                    </div>
+                    <div class="meta">@LastRunText(row)</div>
+
+                    @if (row.Log.Count > 0)
+                    {
+                        <details class="sync-log">
+                            <summary>Run log (@row.Log.Count)</summary>
+                            @foreach (var line in row.Log)
+                            {
+                                <div>@line</div>
+                            }
+                        </details>
+                    }
+                </div>
+
+                <div class="sync-status">
+                    @switch (row.Status)
+                    {
+                        case RunStatus.Running:
+                            <span class="spinner"></span>
+                            break;
+                        case RunStatus.Done:
+                            <Pill Text="Synced" Type="PillType.Success" />
+                            break;
+                        case RunStatus.Failed:
+                            <span title="@row.Message"><Pill Text="Failed" Type="PillType.Critical" /></span>
+                            break;
+                    }
+                </div>
+
+                <button class="btn primary" @onclick="() => RunOneAsync(row)" disabled="@isBusy">Sync now</button>
+                <button class="btn" @onclick="@(() => Nav.NavigateTo($"/sync/edit/{row.Mapping.Id}"))" disabled="@isBusy">Edit</button>
+                @if (pendingDeleteId == row.Mapping.Id)
+                {
+                    <button class="btn danger" @onclick="() => DeleteAsync(row.Mapping)">Confirm delete</button>
+                    <button class="btn" @onclick="() => pendingDeleteId = null">Cancel</button>
+                }
+                else
+                {
+                    <button class="btn danger" @onclick="() => pendingDeleteId = row.Mapping.Id" disabled="@isBusy">Delete</button>
+                }
+            </div>
+        }
+    }
+</div>
+
+@code {
+    enum RunStatus { Idle, Running, Done, Failed }
+
+    sealed class SyncRow(SyncMapping mapping)
+    {
+        public SyncMapping Mapping { get; set; } = mapping;
+        public RunStatus Status { get; set; }
+        public string? Message { get; set; }
+        public List<string> Log { get; } = new();
+    }
+
+    readonly List<SyncRow> rows = new();
+    bool isBusy;
+    bool gitMissing;
+    string gitMessage = "";
+    string? pendingDeleteId;
+    CancellationTokenSource? cts;
+
+    protected override async Task OnInitializedAsync()
+    {
+        SyncStore.Changed += OnStoreChanged;
+        await Config.ReloadAsync();
+        await SyncStore.ReloadAsync();
+        Rebuild();
+
+        try
+        {
+            await Git.EnsureAvailableAsync();
+        }
+        catch (GitUnavailableException ex)
+        {
+            gitMissing = true;
+            gitMessage = ex.Message;
+        }
+    }
+
+    void Rebuild()
+    {
+        // Keep each row's last-run status/log across store reloads (a run writes its result back,
+        // which raises Changed and would otherwise wipe the log the user is reading).
+        var existing = rows.ToDictionary(r => r.Mapping.Id, StringComparer.Ordinal);
+        var rebuilt = SyncStore.Mappings
+            .OrderBy(m => m.Source.FullName, StringComparer.OrdinalIgnoreCase)
+            .Select(m =>
+            {
+                if (existing.TryGetValue(m.Id, out var row))
+                {
+                    row.Mapping = m;
+                    return row;
+                }
+                return new SyncRow(m);
+            })
+            .ToList();
+
+        rows.Clear();
+        rows.AddRange(rebuilt);
+    }
+
+    void OnStoreChanged(object? sender, EventArgs e)
+        => _ = InvokeAsync(() =>
+        {
+            Rebuild();
+            StateHasChanged();
+        });
+
+    string AccountLabel(string accountId)
+        => Config.Accounts.FirstOrDefault(a => a.Id == accountId)?.Label ?? "(deleted account)";
+
+    static string LastRunText(SyncRow row)
+    {
+        if (row.Status == RunStatus.Running)
+            return row.Message ?? "Working…";
+        if (row.Mapping.LastSyncedUtc is not { } when)
+            return "Never run";
+        return $"{row.Mapping.LastResult ?? "Ran"} — {when.ToLocalTime():g}";
+    }
+
+    void Cancel() => cts?.Cancel();
+
+    Task RunOneAsync(SyncRow row) => RunAsync(new[] { row });
+
+    Task RunAllAsync() => RunAsync(rows.ToList());
+
+    async Task RunAsync(IReadOnlyList<SyncRow> targets)
+    {
+        if (isBusy || targets.Count == 0)
+            return;
+
+        pendingDeleteId = null;
+        cts = new CancellationTokenSource();
+        isBusy = true;
+        var failures = 0;
+
+        try
+        {
+            // Sequential: syncs are network- and disk-heavy, and two runs sharing a source would
+            // contend on the same local cache repo.
+            foreach (var row in targets)
+            {
+                cts.Token.ThrowIfCancellationRequested();
+                row.Status = RunStatus.Running;
+                row.Message = null;
+                row.Log.Clear();
+                StateHasChanged();
+
+                var progress = new Progress<string>(line =>
+                {
+                    row.Log.Add(line);
+                    row.Message = line;
+                    StateHasChanged();
+                });
+
+                try
+                {
+                    await Engine.SyncAsync(row.Mapping, progress, cts.Token);
+                    row.Status = RunStatus.Done;
+                    row.Message = null;
+                }
+                catch (OperationCanceledException)
+                {
+                    row.Status = RunStatus.Idle;
+                    row.Message = null;
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    row.Status = RunStatus.Failed;
+                    row.Message = ex.Message;
+                    row.Log.Add(ex.Message);
+                    failures++;
+                }
+                StateHasChanged();
+            }
+
+            if (failures == 0)
+                await Toast.SuccessAsync($"Synced {targets.Count} repo{(targets.Count == 1 ? "" : "s")}");
+            else
+                await Toast.DangerAsync($"{targets.Count - failures} of {targets.Count} synced, {failures} failed — open the run log for details");
+        }
+        catch (OperationCanceledException)
+        {
+            await Toast.InfoAsync("Sync cancelled");
+        }
+        finally
+        {
+            isBusy = false;
+            cts?.Dispose();
+            cts = null;
+            StateHasChanged();
+        }
+    }
+
+    async Task DeleteAsync(SyncMapping mapping)
+    {
+        pendingDeleteId = null;
+        await SyncStore.RemoveAsync(mapping.Id);
+        await Toast.SuccessAsync($"Removed sync for {mapping.Source.FullName}");
+    }
+
+    public void Dispose()
+    {
+        SyncStore.Changed -= OnStoreChanged;
+        cts?.Cancel();
+        cts?.Dispose();
+    }
+}

@@ -1,0 +1,335 @@
+@page "/sync/bulk"
+@inject ISyncStore SyncStore
+@inject IConfigStore Config
+@inject NavigationManager Nav
+@inject IToastService Toast
+
+<div class="page narrow">
+    <div class="page-header">
+        <div>
+            <h1>Bulk add syncs</h1>
+            <span class="subtitle">Every monitored repo across every account, in one list. Pick as many as you like and back them all up to the same destination.</span>
+        </div>
+    </div>
+
+    @if (Config.Accounts.Count == 0)
+    {
+        <div class="card empty-state">
+            <h2>No accounts yet</h2>
+            <p>Add an account and the repos you monitor before setting up syncs.</p>
+            <button class="btn primary" @onclick="@(() => Nav.NavigateTo("/accounts/edit"))">+ Add an account</button>
+        </div>
+    }
+    else
+    {
+        <div class="card">
+            <div class="section-title">Destination</div>
+
+            <div class="field">
+                <label>Account</label>
+                <select value="@targetAccountId" @onchange="OnTargetAccountChanged">
+                    @foreach (var account in Config.Accounts)
+                    {
+                        <option value="@account.Id">@account.Label</option>
+                    }
+                </select>
+            </div>
+
+            <div class="field">
+                <label>
+                    Owner on the destination
+                    <span class="hint">— every selected repo is created under this user or organisation, keeping its own name</span>
+                </label>
+                @* Rebuilds on change: the owner is part of the "already configured" match. *@
+                <input type="text" value="@targetOwner" @onchange="OnTargetOwnerChanged"
+                       placeholder="@(TargetAccount?.Username ?? "owner")" />
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="section-title">Options applied to every sync</div>
+
+            <div class="field">
+                <label>Branches</label>
+                <select value="@branchMode" @onchange="OnBranchModeChanged">
+                    <option value="@SyncBranchMode.DefaultBranch">Default branch only</option>
+                    <option value="@SyncBranchMode.All">All branches</option>
+                </select>
+                <div class="hint">
+                    Per-repo branch lists aren't offered in bulk — create the sync here, then edit any
+                    individual one to pick specific branches.
+                </div>
+            </div>
+
+            <div class="field">
+                <label><input type="checkbox" @bind="includeTags" /> Include tags</label>
+            </div>
+
+            <div class="field">
+                <label><input type="checkbox" @bind="force" /> Force-update refs on the target</label>
+                <div class="hint">
+                    Off by default: a destination that has diverged fails loudly instead of losing commits.
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="page-header" style="margin-bottom:10px;">
+                <div>
+                    <h2>Repositories</h2>
+                    <span class="subtitle">
+                        @SelectedCount selected · @selectableCount available · @rows.Count total
+                        across @Config.Accounts.Count account@(Config.Accounts.Count == 1 ? "" : "s")
+                    </span>
+                </div>
+                <span class="spacer"></span>
+                <button class="btn" @onclick="SelectAllVisible">Select all</button>
+                <button class="btn" @onclick="ClearSelection">Clear</button>
+            </div>
+
+            @if (rows.Count == 0)
+            {
+                <div class="hint">No accounts have monitored repos yet. Add some on the Accounts page first.</div>
+            }
+            else
+            {
+                <div class="repo-pick-toolbar">
+                    <input type="search" value="@filterText" @oninput="OnFilterChanged"
+                           placeholder="Filter repos by name…" />
+                    <select value="@accountFilter" @onchange="OnAccountFilterChanged">
+                        <option value="">All accounts</option>
+                        @foreach (var account in Config.Accounts)
+                        {
+                            <option value="@account.Id">@account.Label</option>
+                        }
+                    </select>
+                </div>
+
+                <div class="repo-pick-list">
+                    @if (Filtered.Count == 0)
+                    {
+                        <div class="repo-pick-row"><span class="muted">No repos match the filter.</span></div>
+                    }
+                    @foreach (var row in Filtered)
+                    {
+                        <label class="repo-pick-row" @key="row.Key">
+                            <input type="checkbox" checked="@row.Selected" disabled="@row.Blocked"
+                                   @onchange="e => row.Selected = (bool)e.Value!" />
+                            <span class="name">@row.Repo.FullName</span>
+                            <span class="desc">@row.AccountLabel → @TargetOwnerPreview/@row.Repo.Name</span>
+                            <span class="badge">
+                                @if (row.AlreadyConfigured)
+                                {
+                                    <Pill Text="Already configured" Type="PillType.Info" />
+                                }
+                                else if (row.IsSelfTarget)
+                                {
+                                    <span title="The destination would be this exact repo">
+                                        <Pill Text="Same as destination" Type="PillType.Warning" />
+                                    </span>
+                                }
+                            </span>
+                        </label>
+                    }
+                </div>
+            }
+        </div>
+
+        <div class="actions-bar">
+            <span class="status">@errorMessage</span>
+            <button class="btn" @onclick="@(() => Nav.NavigateTo("/sync"))">Cancel</button>
+            <button class="btn primary" @onclick="CreateAsync" disabled="@(isSaving || SelectedCount == 0)">
+                Create @SelectedCount sync@(SelectedCount == 1 ? "" : "s")
+            </button>
+        </div>
+    }
+</div>
+
+@code {
+    sealed class RepoRow(MonitoredAccount account, MonitoredRepo repo)
+    {
+        public MonitoredAccount Account { get; } = account;
+        public MonitoredRepo Repo { get; } = repo;
+        public string AccountLabel => this.Account.Label;
+        public string Key => $"{this.Account.Id}|{this.Repo.FullName}";
+        public bool Selected { get; set; }
+
+        /// <summary>A mapping for this source→destination pair already exists.</summary>
+        public bool AlreadyConfigured { get; set; }
+
+        /// <summary>The destination resolves to this very repo, so syncing it would be a no-op.</summary>
+        public bool IsSelfTarget { get; set; }
+
+        public bool Blocked => this.AlreadyConfigured || this.IsSelfTarget;
+    }
+
+    string targetAccountId = "";
+    string targetOwner = "";
+    string accountFilter = "";
+    SyncBranchMode branchMode = SyncBranchMode.DefaultBranch;
+    bool includeTags = true;
+    bool force;
+    bool isSaving;
+    string filterText = "";
+    string? errorMessage;
+    int selectableCount;
+
+    readonly List<RepoRow> rows = new();
+
+    MonitoredAccount? TargetAccount => Config.Accounts.FirstOrDefault(a => a.Id == targetAccountId);
+
+    string TargetOwnerPreview => string.IsNullOrWhiteSpace(targetOwner)
+        ? (TargetAccount?.Username ?? "owner")
+        : targetOwner.Trim();
+
+    int SelectedCount => rows.Count(r => r.Selected && !r.Blocked);
+
+    List<RepoRow> Filtered
+    {
+        get
+        {
+            IEnumerable<RepoRow> query = rows;
+            if (!string.IsNullOrEmpty(accountFilter))
+                query = query.Where(r => r.Account.Id == accountFilter);
+            if (!string.IsNullOrWhiteSpace(filterText))
+                query = query.Where(r => r.Repo.FullName.Contains(filterText.Trim(), StringComparison.OrdinalIgnoreCase));
+            return query.ToList();
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Config.ReloadAsync();
+        await SyncStore.ReloadAsync();
+
+        // Default the destination to whichever account has the fewest monitored repos — in practice
+        // the freshly added backup server rather than the busy source account.
+        var target = Config.Accounts.OrderBy(a => a.Repos.Count).FirstOrDefault();
+        targetAccountId = target?.Id ?? "";
+        targetOwner = target?.Username ?? "";
+
+        Rebuild();
+    }
+
+    void Rebuild()
+    {
+        var keep = rows.Where(r => r.Selected).Select(r => r.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        rows.Clear();
+
+        var owner = TargetOwnerPreview;
+
+        // Every monitored repo from every account, so nothing is hidden behind an account picker.
+        foreach (var account in Config.Accounts)
+        {
+            foreach (var repo in account.Repos)
+            {
+                var exists = SyncStore.Mappings.Any(m =>
+                    m.SourceAccountId == account.Id &&
+                    string.Equals(m.Source.FullName, repo.FullName, StringComparison.OrdinalIgnoreCase) &&
+                    m.TargetAccountId == targetAccountId &&
+                    string.Equals(m.TargetOwner, owner, StringComparison.OrdinalIgnoreCase));
+
+                var selfTarget = account.Id == targetAccountId &&
+                    string.Equals(owner, repo.Owner, StringComparison.OrdinalIgnoreCase);
+
+                var row = new RepoRow(account, repo)
+                {
+                    AlreadyConfigured = exists,
+                    IsSelfTarget = selfTarget
+                };
+                row.Selected = !row.Blocked && keep.Contains(row.Key);
+                rows.Add(row);
+            }
+        }
+
+        rows.Sort((a, b) =>
+        {
+            var byRepo = string.Compare(a.Repo.FullName, b.Repo.FullName, StringComparison.OrdinalIgnoreCase);
+            return byRepo != 0 ? byRepo : string.Compare(a.AccountLabel, b.AccountLabel, StringComparison.OrdinalIgnoreCase);
+        });
+        selectableCount = rows.Count(r => !r.Blocked);
+    }
+
+    void OnTargetAccountChanged(ChangeEventArgs e)
+    {
+        targetAccountId = e.Value?.ToString() ?? "";
+        // Follow the newly chosen account's login unless the user typed their own owner.
+        targetOwner = TargetAccount?.Username ?? "";
+        Rebuild();
+    }
+
+    void OnTargetOwnerChanged(ChangeEventArgs e)
+    {
+        targetOwner = e.Value?.ToString() ?? "";
+        Rebuild();
+    }
+
+    void OnAccountFilterChanged(ChangeEventArgs e) => accountFilter = e.Value?.ToString() ?? "";
+
+    void OnBranchModeChanged(ChangeEventArgs e)
+        => branchMode = Enum.TryParse<SyncBranchMode>(e.Value?.ToString(), out var mode) ? mode : SyncBranchMode.DefaultBranch;
+
+    void OnFilterChanged(ChangeEventArgs e) => filterText = e.Value?.ToString() ?? "";
+
+    void SelectAllVisible()
+    {
+        foreach (var row in Filtered.Where(r => !r.Blocked))
+            row.Selected = true;
+    }
+
+    void ClearSelection() => rows.ForEach(r => r.Selected = false);
+
+    async Task CreateAsync()
+    {
+        errorMessage = null;
+
+        if (TargetAccount is null)
+        {
+            errorMessage = "Pick a destination account";
+            return;
+        }
+
+        var owner = string.IsNullOrWhiteSpace(targetOwner) ? TargetAccount.Username : targetOwner.Trim();
+        if (string.IsNullOrWhiteSpace(owner))
+        {
+            errorMessage = "Enter the owner (user or organisation) on the destination server";
+            return;
+        }
+
+        var picked = rows.Where(r => r.Selected && !r.Blocked).ToList();
+        if (picked.Count == 0)
+            return;
+
+        isSaving = true;
+        var created = 0;
+        try
+        {
+            foreach (var row in picked)
+            {
+                await SyncStore.UpsertAsync(new SyncMapping(
+                    Guid.NewGuid().ToString("n"),
+                    row.Account.Id,
+                    row.Repo,
+                    targetAccountId,
+                    owner!,
+                    TargetName: null, // keep the source name
+                    branchMode,
+                    Branches: null,
+                    includeTags,
+                    force));
+                created++;
+            }
+
+            await Toast.SuccessAsync($"Created {created} sync{(created == 1 ? "" : "s")}");
+            Nav.NavigateTo("/sync");
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed after creating {created}: {ex.Message}";
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+}

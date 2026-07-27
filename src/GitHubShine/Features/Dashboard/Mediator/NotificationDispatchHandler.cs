@@ -4,7 +4,9 @@ using Shiny.Notifications;
 namespace GitHubShine.Dashboard.Mediator;
 
 [MediatorSingleton]
-public sealed class NotificationDispatchHandler(INotificationManager notifications, IConfigStore config, ILogger<NotificationDispatchHandler> logger)
+public sealed class NotificationDispatchHandler(
+    INotificationHub notifications,
+    IConfigStore config)
     : IEventHandler<WorkflowRunFailedEvent>,
       IEventHandler<NewInboxItemEvent>,
       IEventHandler<NewPullRequestEvent>,
@@ -75,9 +77,6 @@ public sealed class NotificationDispatchHandler(INotificationManager notificatio
         }).ConfigureAwait(false);
     }
 
-    async Task Send(Notification n)
-    {
-        try { await notifications.Send(n).ConfigureAwait(false); }
-        catch (Exception ex) { logger.LogWarning(ex, "Failed to send notification"); }
-    }
+    // INotificationHub handles permission, platform support and error swallowing (see NotificationHub).
+    Task Send(Notification n) => notifications.SendAsync(n);
 }

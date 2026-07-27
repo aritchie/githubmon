@@ -37,6 +37,22 @@ public sealed record AccessibleRepo(string Owner, string Name, string? Descripti
 }
 
 /// <summary>
+/// The slice of a repo's metadata the sync engine needs: where to fetch/push it
+/// (<see cref="CloneUrl"/>), which branch is authoritative, and the settings copied
+/// onto the target when the sync has to create it.
+/// </summary>
+public sealed record GitRepoInfo(
+    string Owner,
+    string Name,
+    string? Description,
+    bool Private,
+    string DefaultBranch,
+    string CloneUrl)
+{
+    public string FullName => $"{Owner}/{Name}";
+}
+
+/// <summary>
 /// Backend-agnostic view of a single account's git host. One instance is bound to
 /// one account (host + token + id) and is cached per-account by
 /// <see cref="IGitProviderFactory"/>. Implementations: GitHubProvider (Octokit),
@@ -53,4 +69,24 @@ public interface IGitProvider
     Task<Stream> DownloadArchiveAsync(MonitoredRepo repo, CancellationToken ct = default);
     Task<GitUserInfo> ValidateAndGetUserAsync(CancellationToken ct = default);
     Task<IReadOnlyList<AccessibleRepo>> ListAccessibleReposAsync(CancellationToken ct = default);
+
+    // ---- repo-to-repo sync support (see GitHubShine.Sync.RepoSyncEngine) ----
+
+    /// <summary>
+    /// Metadata for a single repo, or <c>null</c> when it doesn't exist (or isn't visible to
+    /// this token). The sync engine uses null to mean "create the target".
+    /// </summary>
+    Task<GitRepoInfo?> GetRepoInfoAsync(MonitoredRepo repo, CancellationToken ct = default);
+
+    /// <summary>Branch names on the repo, for the sync mapping's branch picker.</summary>
+    Task<IReadOnlyList<string>> ListBranchesAsync(MonitoredRepo repo, CancellationToken ct = default);
+
+    /// <summary>
+    /// Creates an <b>empty</b> repo — no auto-init/README. An auto-initialised repo has a root
+    /// commit the source doesn't share, which turns the first sync push into a non-fast-forward.
+    /// </summary>
+    Task<GitRepoInfo> CreateRepoAsync(string owner, string name, string? description, bool isPrivate, CancellationToken ct = default);
+
+    /// <summary>Points the repo's HEAD at <paramref name="branch"/>.</summary>
+    Task SetDefaultBranchAsync(MonitoredRepo repo, string branch, CancellationToken ct = default);
 }

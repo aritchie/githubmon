@@ -122,13 +122,72 @@ public sealed class GitHubProvider : IGitProvider
     public async Task<IReadOnlyList<AccessibleRepo>> ListAccessibleReposAsync(CancellationToken ct = default)
     {
         var fetched = await client.Repository
-            .GetAllForCurrent(new ApiOptions { PageSize = 100, PageCount = 5, StartPage = 1 })
+            // 100 x 20 = up to 2000 repos. Octokit follows Link headers and stops as soon as the
+            // pages run out, so a generous ceiling costs nothing for smaller accounts — but the
+            // old 5-page (500 repo) cap silently truncated the list for accounts in many orgs.
+            // Only ever called on demand (account edit / all-repos page), never from the poller.
+            .GetAllForCurrent(new ApiOptions { PageSize = 100, PageCount = 20, StartPage = 1 })
             .ConfigureAwait(false);
 
         return fetched
             .Select(r => new AccessibleRepo(r.Owner.Login, r.Name, r.Description, r.Private))
             .ToArray();
     }
+
+    public async Task<GitRepoInfo?> GetRepoInfoAsync(MonitoredRepo repo, CancellationToken ct = default)
+    {
+        try
+        {
+            var r = await client.Repository.Get(repo.Owner, repo.Name).ConfigureAwait(false);
+            return ToInfo(r);
+        }
+        catch (NotFoundException)
+        {
+            // "Doesn't exist" and "not visible to this token" are indistinguishable on GitHub —
+            // both come back as 404. The sync engine treats either as "create it".
+            return null;
+        }
+    }
+
+    public async Task<IReadOnlyList<string>> ListBranchesAsync(MonitoredRepo repo, CancellationToken ct = default)
+    {
+        var branches = await client.Repository.Branch
+            .GetAll(repo.Owner, repo.Name, new ApiOptions { PageSize = 100, PageCount = 5 })
+            .ConfigureAwait(false);
+        return branches.Select(b => b.Name).ToArray();
+    }
+
+    public async Task<GitRepoInfo> CreateRepoAsync(string owner, string name, string? description, bool isPrivate, CancellationToken ct = default)
+    {
+        var newRepo = new NewRepository(name)
+        {
+            Description = description,
+            Private = isPrivate,
+            AutoInit = false
+        };
+
+        // GitHub splits repo creation across two endpoints — /user/repos for the authenticated
+        // user and /orgs/{org}/repos for everything else — so resolve which one this owner is.
+        var me = await client.User.Current().ConfigureAwait(false);
+        var created = string.Equals(me.Login, owner, StringComparison.OrdinalIgnoreCase)
+            ? await client.Repository.Create(newRepo).ConfigureAwait(false)
+            : await client.Repository.Create(owner, newRepo).ConfigureAwait(false);
+
+        return ToInfo(created);
+    }
+
+    public async Task SetDefaultBranchAsync(MonitoredRepo repo, string branch, CancellationToken ct = default)
+        => await client.Repository
+            .Edit(repo.Owner, repo.Name, new RepositoryUpdate { DefaultBranch = branch })
+            .ConfigureAwait(false);
+
+    static GitRepoInfo ToInfo(Repository r) => new(
+        r.Owner.Login,
+        r.Name,
+        r.Description,
+        r.Private,
+        string.IsNullOrWhiteSpace(r.DefaultBranch) ? "main" : r.DefaultBranch,
+        r.CloneUrl);
 
     static DateTimeOffset ParseDate(string? s)
         => DateTimeOffset.TryParse(s, out var d) ? d : DateTimeOffset.UtcNow;

@@ -143,8 +143,9 @@ public sealed class GiteaProvider : IGitProvider
     public async Task<IReadOnlyList<AccessibleRepo>> ListAccessibleReposAsync(CancellationToken ct = default)
     {
         var list = new List<AccessibleRepo>();
-        // Paginate a few pages like the GitHub path (50 * 10 = up to 500 repos).
-        for (var page = 1; page <= 10; page++)
+        // 50 x 40 = up to 2000 repos, matching the GitHub path. The loop breaks on the first
+        // short page, so the higher ceiling costs nothing for smaller servers.
+        for (var page = 1; page <= 40; page++)
         {
             using var doc = await GetJsonAsync($"user/repos?page={page}&limit=50", ct).ConfigureAwait(false);
             var count = 0;
@@ -163,15 +164,118 @@ public sealed class GiteaProvider : IGitProvider
         return list;
     }
 
+    public async Task<GitRepoInfo?> GetRepoInfoAsync(MonitoredRepo repo, CancellationToken ct = default)
+    {
+        try
+        {
+            using var doc = await GetJsonAsync($"repos/{repo.Owner}/{repo.Name}", ct).ConfigureAwait(false);
+            return ToInfo(doc.RootElement, repo.Owner, repo.Name);
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
+        {
+            return null;
+        }
+    }
+
+    public async Task<IReadOnlyList<string>> ListBranchesAsync(MonitoredRepo repo, CancellationToken ct = default)
+    {
+        var names = new List<string>();
+        for (var page = 1; page <= 5; page++)
+        {
+            using var doc = await GetJsonAsync($"repos/{repo.Owner}/{repo.Name}/branches?page={page}&limit=50", ct).ConfigureAwait(false);
+            var count = 0;
+            foreach (var b in doc.RootElement.EnumerateArray())
+            {
+                count++;
+                if (GetString(b, "name") is { Length: > 0 } name)
+                    names.Add(name);
+            }
+            if (count < 50)
+                break; // last page
+        }
+        return names;
+    }
+
+    public async Task<GitRepoInfo> CreateRepoAsync(string owner, string name, string? description, bool isPrivate, CancellationToken ct = default)
+    {
+        // Gitea, like GitHub, splits creation between the authenticated user and orgs.
+        var me = await ValidateAndGetUserAsync(ct).ConfigureAwait(false);
+        var url = string.Equals(me.Login, owner, StringComparison.OrdinalIgnoreCase)
+            ? "user/repos"
+            : $"orgs/{owner}/repos";
+
+        using var doc = await SendJsonAsync(HttpMethod.Post, url, w =>
+        {
+            w.WriteString("name", name);
+            if (!string.IsNullOrWhiteSpace(description))
+                w.WriteString("description", description);
+            w.WriteBoolean("private", isPrivate);
+            // See IGitProvider.CreateRepoAsync — an auto-initialised repo can't be fast-forwarded to.
+            w.WriteBoolean("auto_init", false);
+        }, ct).ConfigureAwait(false);
+
+        return ToInfo(doc.RootElement, owner, name);
+    }
+
+    public async Task SetDefaultBranchAsync(MonitoredRepo repo, string branch, CancellationToken ct = default)
+    {
+        using var _ = await SendJsonAsync(
+            HttpMethod.Patch,
+            $"repos/{repo.Owner}/{repo.Name}",
+            w => w.WriteString("default_branch", branch),
+            ct).ConfigureAwait(false);
+    }
+
+    static GitRepoInfo ToInfo(JsonElement r, string fallbackOwner, string fallbackName) => new(
+        GetString(GetProp(r, "owner"), "login") ?? fallbackOwner,
+        GetString(r, "name") ?? fallbackName,
+        GetString(r, "description"),
+        GetBool(r, "private"),
+        GetString(r, "default_branch") is { Length: > 0 } b ? b : "main",
+        GetString(r, "clone_url") ?? "");
+
     async Task<JsonDocument> GetJsonAsync(string relativeUrl, CancellationToken ct)
     {
         var resp = await http.GetAsync(relativeUrl, ct).ConfigureAwait(false);
+        return await ReadJsonAsync(resp, relativeUrl, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// POST/PATCH with a body written by <paramref name="writeBody"/>. Bodies are built with a
+    /// <see cref="Utf8JsonWriter"/> rather than a serializer so no JsonTypeInfo/reflection is
+    /// needed — same AOT/trim-safe approach as the JsonDocument reads above.
+    /// </summary>
+    async Task<JsonDocument> SendJsonAsync(HttpMethod method, string relativeUrl, Action<Utf8JsonWriter> writeBody, CancellationToken ct)
+    {
+        using var buffer = new MemoryStream();
+        await using (var writer = new Utf8JsonWriter(buffer))
+        {
+            writer.WriteStartObject();
+            writeBody(writer);
+            writer.WriteEndObject();
+        }
+
+        using var request = new HttpRequestMessage(method, relativeUrl)
+        {
+            Content = new ByteArrayContent(buffer.ToArray())
+        };
+        request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+
+        var resp = await http.SendAsync(request, ct).ConfigureAwait(false);
+        return await ReadJsonAsync(resp, relativeUrl, ct).ConfigureAwait(false);
+    }
+
+    static async Task<JsonDocument> ReadJsonAsync(HttpResponseMessage resp, string relativeUrl, CancellationToken ct)
+    {
         if (!resp.IsSuccessStatusCode)
         {
             var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
             throw new HttpRequestException($"Gitea {(int)resp.StatusCode} {resp.StatusCode} for {relativeUrl}: {Truncate(body)}", null, resp.StatusCode);
         }
         await using var stream = await resp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+        // 204 No Content (some Gitea PATCH responses) parses as an empty document rather than throwing.
+        if (stream.CanSeek && stream.Length == 0)
+            return JsonDocument.Parse("{}");
         return await JsonDocument.ParseAsync(stream, cancellationToken: ct).ConfigureAwait(false);
     }
 

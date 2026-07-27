@@ -4,6 +4,9 @@
 @inject IToastService Toast
 @inject IDatabaseBackup Backup
 @inject IFileDialogs FileDialogs
+@inject INotificationHub Notifications
+@using Shiny
+@using Shiny.Notifications
 
 <div class="page narrow">
     <div class="page-header">
@@ -17,6 +20,36 @@
         <h2>Notifications</h2>
         <div class="setting-row">
             <div class="setting-label">
+                <div><strong>System permission</strong></div>
+                <div class="hint">
+                    @if (access == AccessState.Available)
+                    {
+                        <text>macOS is allowing GitHub Shine to post notifications.</text>
+                    }
+                    else if (access is AccessState.Denied or AccessState.Disabled)
+                    {
+                        <text>
+                            Blocked by the system, so no alerts can be shown. Turn it back on in
+                            System Settings → Notifications → GitHub Shine.
+                        </text>
+                    }
+                    else
+                    {
+                        <text>Permission hasn't been granted yet — alerts stay hidden until it is.</text>
+                    }
+                </div>
+            </div>
+            <div class="pills">
+                <Pill Text="@AccessLabel" Type="@AccessPill" />
+                @if (access != AccessState.Available)
+                {
+                    <button class="btn" @onclick="RequestAccessAsync" disabled="@isBusyNotify">Request…</button>
+                }
+            </div>
+        </div>
+
+        <div class="setting-row">
+            <div class="setting-label">
                 <div><strong>Mute notifications</strong></div>
                 <div class="hint">Silence new-issue, new-PR, and failed-build alerts without removing any accounts.</div>
             </div>
@@ -24,6 +57,14 @@
                 <input type="checkbox" checked="@muted" @onchange="OnMuteChanged" />
                 <span class="track"></span>
             </label>
+        </div>
+
+        <div class="setting-row">
+            <div class="setting-label">
+                <div><strong>Test notification</strong></div>
+                <div class="hint">Posts a sample alert now, so you can confirm the whole path works.</div>
+            </div>
+            <button class="btn" @onclick="SendTestAsync" disabled="@isBusyNotify">Send test</button>
         </div>
     </div>
 
@@ -76,9 +117,29 @@
     bool muted;
     RepoSort sort = RepoSort.Stars;
     int pollSeconds = 60;
+    AccessState access = AccessState.Unknown;
+    bool isBusyNotify;
 
     static readonly int[] presetIntervals = { 15, 30, 60, 120, 300, 600, 900, 1800, 3600 };
     int[] intervalOptions = presetIntervals;
+
+    string AccessLabel => access switch
+    {
+        AccessState.Available => "Allowed",
+        AccessState.Denied => "Denied",
+        AccessState.Disabled => "Disabled",
+        AccessState.Restricted => "Restricted",
+        AccessState.NotSetup => "Not requested",
+        AccessState.NotSupported => "Unsupported",
+        _ => "Unknown"
+    };
+
+    PillType AccessPill => access switch
+    {
+        AccessState.Available => PillType.Success,
+        AccessState.Denied or AccessState.Disabled => PillType.Critical,
+        _ => PillType.Warning
+    };
 
     protected override async Task OnInitializedAsync()
     {
@@ -86,8 +147,59 @@
         await LoadAsync();
     }
 
+    async Task RequestAccessAsync()
+    {
+        isBusyNotify = true;
+        try
+        {
+            access = await Notifications.RequestAsync();
+            if (access == AccessState.Available)
+                await Toast.SuccessAsync("Notifications enabled");
+            else
+                await Toast.DangerAsync($"Notification permission is {AccessLabel} — enable it in System Settings → Notifications");
+        }
+        finally
+        {
+            isBusyNotify = false;
+        }
+    }
+
+    async Task SendTestAsync()
+    {
+        isBusyNotify = true;
+        try
+        {
+            access = await Notifications.EnsureAsync();
+            if (access != AccessState.Available)
+            {
+                await Toast.DangerAsync($"Can't send — notification permission is {AccessLabel}");
+                return;
+            }
+
+            var sent = await Notifications.SendAsync(new Notification
+            {
+                Id = 999_001,
+                Title = "GitHub Shine",
+                Message = "Test notification — alerts are working."
+            });
+            if (sent)
+                await Toast.SuccessAsync("Test notification sent");
+            else
+                await Toast.DangerAsync("Send failed — see the app log for details");
+        }
+        catch (Exception ex)
+        {
+            await Toast.DangerAsync($"Send failed: {ex.Message}");
+        }
+        finally
+        {
+            isBusyNotify = false;
+        }
+    }
+
     async Task LoadAsync()
     {
+        access = await Notifications.CheckAsync();
         muted = await Config.GetNotificationsMutedAsync();
         sort = await Config.GetRepoSortAsync();
         pollSeconds = (int)(await Config.GetPollIntervalAsync()).TotalSeconds;

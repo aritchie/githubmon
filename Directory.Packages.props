@@ -1,7 +1,7 @@
 <Project>
     <PropertyGroup>
         <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
-        <ShinyVersion>5.2.5</ShinyVersion>
+        <ShinyVersion>5.3.0</ShinyVersion>
         <MauiLabsVersion>0.1.0-preview.12.26368.2</MauiLabsVersion>
         <ControlsVersion>1.0.1-beta-0148</ControlsVersion>
         <MauiVersion>10.0.90</MauiVersion>
@@ -16,7 +16,7 @@
         <PackageVersion Include="Shiny.Notifications.Linux" Version="$(ShinyVersion)"/>
         <PackageVersion Include="Shiny.Blazor.Controls" Version="$(ControlsVersion)"/>
         <PackageVersion Include="Shiny.Maui.Controls.Desktop" Version="$(ControlsVersion)"/>
-        <PackageVersion Include="Shiny.DocumentDb.Sqlite" Version="11.3.0"/>
+        <PackageVersion Include="Shiny.DocumentDb.Sqlite" Version="12.2.1"/>
         <PackageVersion Include="Shiny.Extensions.Stores" Version="5.1.4"/>
         <PackageVersion Include="Shiny.Extensions.DependencyInjection" Version="5.1.4"/>
         <PackageVersion Include="Microsoft.Maui.Platforms.MacOS" Version="$(MauiLabsVersion)"/>
