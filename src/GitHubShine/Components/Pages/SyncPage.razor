@@ -6,6 +6,9 @@
 @inject IGitCli Git
 @inject NavigationManager Nav
 @inject IToastService Toast
+@inject IBrowser Browser
+@inject SnapshotCache Snapshots
+@inject IGitProviderFactory Factory
 
 <div class="page narrow">
     <div class="page-header">
@@ -26,6 +29,36 @@
         </div>
     }
 
+    @if (BlockedRows.Count > 0)
+    {
+        <div class="card sync-warning">
+            <strong>@BlockedRows.Count sync@(BlockedRows.Count == 1 ? "" : "s") can't run</strong>
+            <div class="meta">
+                Each reads a repo its source account no longer monitors — usually left over from moving
+                repos between accounts. Run all skips them. Move each to the account that does monitor it,
+                or delete it.
+            </div>
+            @if (SupersededRows.Count > 0)
+            {
+                <div class="pills" style="margin-top:10px;">
+                    @if (pendingCleanup)
+                    {
+                        <button class="btn danger" @onclick="CleanUpSupersededAsync" disabled="@isBusy">
+                            Confirm — delete @SupersededRows.Count
+                        </button>
+                        <button class="btn" @onclick="() => pendingCleanup = false">Cancel</button>
+                    }
+                    else
+                    {
+                        <button class="btn danger" @onclick="() => pendingCleanup = true" disabled="@isBusy">
+                            Delete @SupersededRows.Count already covered by another sync
+                        </button>
+                    }
+                </div>
+            }
+        </div>
+    }
+
     @if (rows.Count == 0)
     {
         <div class="card empty-state">
@@ -41,8 +74,30 @@
     {
         <div class="card">
             <div class="repo-pick-toolbar">
-                <span class="muted">@rows.Count sync@(rows.Count == 1 ? "" : "s") configured</span>
+                <span class="muted">
+                    @rows.Count sync@(rows.Count == 1 ? "" : "s") configured
+                    @if (BehindCount > 0)
+                    {
+                        <text> · </text><strong class="warn-text">@BehindCount behind</strong>
+                    }
+                    @if (UpToDateCount > 0)
+                    {
+                        <text> · @UpToDateCount up to date</text>
+                    }
+                </span>
                 <span class="spacer" style="flex:1;"></span>
+                @if (isChecking)
+                {
+                    <span class="spinner"></span>
+                    <span class="muted">Checking @checkedCount/@checkTotal…</span>
+                }
+                else if (!isBusy)
+                {
+                    <button class="btn" @onclick="CheckAllAsync"
+                            title="Reads each source repo's last-push time and compares it with that sync's last run">
+                        Check for changes
+                    </button>
+                }
                 @if (isBusy)
                 {
                     <span class="spinner"></span>
@@ -50,15 +105,17 @@
                 }
                 else
                 {
-                    <button class="btn primary" @onclick="RunAllAsync">Run all</button>
+                    <button class="btn primary" @onclick="RunAllAsync" disabled="@isChecking">Run all</button>
                 }
             </div>
         </div>
 
         @foreach (var row in rows)
         {
-            <div class="card sync-row" @key="row.Mapping.Id">
+            <div class="card sync-row @(row.Blocked ? "sync-row-blocked" : "")" @key="row.Mapping.Id">
                 <div class="sync-body">
+                    @* Route is text only — pills live in .sync-status so a long repo name can wrap
+                       without shoving a badge (and then the buttons) out of the row. *@
                     <div class="sync-route">
                         <strong>@row.Mapping.Source.FullName</strong>
                         <span class="sync-arrow">→</span>
@@ -76,7 +133,36 @@
                             <text> · force</text>
                         }
                     </div>
-                    <div class="meta">@LastRunText(row)</div>
+
+                    @if (row.ShowDetails)
+                    {
+                        <div class="sync-details">
+                            <div><span class="muted">Last run</span> @LastRunText(row)</div>
+                            <div><span class="muted">Source last push</span> @PushedAtText(row)</div>
+                            @if (row.FreshnessDetail is not null)
+                            {
+                                <div><span class="muted">Status</span> @row.FreshnessDetail</div>
+                            }
+                        </div>
+                    }
+
+                    @if (row.Issue is not null)
+                    {
+                        <div class="sync-issue">
+                            @row.Issue
+                            @if (row.SupersededBy is not null)
+                            {
+                                <text>
+                                    The @AccountLabel(row.SupersededBy.SourceAccountId) sync already covers
+                                    @row.Mapping.TargetFullName, so this one is safe to delete.
+                                </text>
+                            }
+                            else if (row.RepointTo is not null)
+                            {
+                                <text>@row.Mapping.Source.FullName is monitored on @row.RepointTo.Label — move it there to fix this.</text>
+                            }
+                        </div>
+                    }
 
                     @if (row.Log.Count > 0)
                     {
@@ -90,32 +176,74 @@
                     }
                 </div>
 
+                @* One status column, one badge at a time, most urgent first — a run result outranks
+                   the freshness estimate it just made stale. Duplicate-destination is the only
+                   badge that can stack, since it's about a different problem entirely. *@
                 <div class="sync-status">
-                    @switch (row.Status)
+                    @if (row.Status == RunStatus.Running)
                     {
-                        case RunStatus.Running:
-                            <span class="spinner"></span>
-                            break;
-                        case RunStatus.Done:
-                            <Pill Text="Synced" Type="PillType.Success" />
-                            break;
-                        case RunStatus.Failed:
-                            <span title="@row.Message"><Pill Text="Failed" Type="PillType.Critical" /></span>
-                            break;
+                        <span class="spinner"></span>
+                    }
+                    else if (row.Status == RunStatus.Failed)
+                    {
+                        <span title="@row.Message"><Pill Text="Failed" Type="PillType.Critical" /></span>
+                    }
+                    else if (row.Blocked)
+                    {
+                        <span title="@row.Issue"><Pill Text="Needs attention" Type="PillType.Warning" /></span>
+                    }
+                    else if (row.Status == RunStatus.Done)
+                    {
+                        <Pill Text="Synced" Type="PillType.Success" />
+                    }
+                    else if (row.Freshness == Freshness.Behind)
+                    {
+                        <span title="@row.FreshnessDetail"><Pill Text="Behind" Type="PillType.Warning" /></span>
+                    }
+                    else if (row.Freshness == Freshness.UpToDate)
+                    {
+                        <span title="@row.FreshnessDetail"><Pill Text="Up to date" Type="PillType.Success" /></span>
+                    }
+
+                    @if (row.DuplicateDestination is not null)
+                    {
+                        <span title="@($"{AccountLabel(row.DuplicateDestination.SourceAccountId)} also syncs {row.DuplicateDestination.Source.FullName} to this same destination")">
+                            <Pill Text="Duplicate" Type="PillType.Warning" />
+                        </span>
                     }
                 </div>
 
-                <button class="btn primary" @onclick="() => RunOneAsync(row)" disabled="@isBusy">Sync now</button>
-                <button class="btn" @onclick="@(() => Nav.NavigateTo($"/sync/edit/{row.Mapping.Id}"))" disabled="@isBusy">Edit</button>
-                @if (pendingDeleteId == row.Mapping.Id)
-                {
-                    <button class="btn danger" @onclick="() => DeleteAsync(row.Mapping)">Confirm delete</button>
-                    <button class="btn" @onclick="() => pendingDeleteId = null">Cancel</button>
-                }
-                else
-                {
-                    <button class="btn danger" @onclick="() => pendingDeleteId = row.Mapping.Id" disabled="@isBusy">Delete</button>
-                }
+                <div class="sync-actions">
+                    <div class="sync-actions-row">
+                        <button class="btn primary" @onclick="() => RunOneAsync(row)"
+                                disabled="@(isBusy || row.Blocked)"
+                                title="@(row.Blocked ? row.Issue : "Push whatever the target is missing")">Sync now</button>
+                        <button class="btn @(row.ShowDetails ? "active" : "")" @onclick="() => row.ShowDetails = !row.ShowDetails"
+                                title="@LastRunText(row)">
+                            @LastSyncedLabel(row)
+                        </button>
+                    </div>
+                    <div class="sync-actions-row">
+                        <button class="btn subtle" title="@(row.SourceUrl ?? "The source account is gone, so there's no link to open")"
+                                @onclick="() => OpenAsync(row.SourceUrl)" disabled="@(row.SourceUrl is null)">Source ↗</button>
+                        <button class="btn subtle" title="@(row.TargetUrl ?? "The destination account is gone, so there's no link to open")"
+                                @onclick="() => OpenAsync(row.TargetUrl)" disabled="@(row.TargetUrl is null)">Target ↗</button>
+                        @if (row.RepointTo is not null)
+                        {
+                            <button class="btn" @onclick="() => RepointAsync(row)" disabled="@isBusy">Move to @row.RepointTo.Label</button>
+                        }
+                        <button class="btn subtle" @onclick="@(() => Nav.NavigateTo($"/sync/edit/{row.Mapping.Id}"))" disabled="@isBusy">Edit</button>
+                        @if (pendingDeleteId == row.Mapping.Id)
+                        {
+                            <button class="btn danger" @onclick="() => DeleteAsync(row.Mapping)">Confirm</button>
+                            <button class="btn subtle" @onclick="() => pendingDeleteId = null">Cancel</button>
+                        }
+                        else
+                        {
+                            <button class="btn subtle danger" @onclick="() => pendingDeleteId = row.Mapping.Id" disabled="@isBusy">Delete</button>
+                        }
+                    </div>
+                </div>
             </div>
         }
     }
@@ -124,12 +252,52 @@
 @code {
     enum RunStatus { Idle, Running, Done, Failed }
 
+    /// <summary>How the target compares with its source, as far as we can tell without a fetch.</summary>
+    enum Freshness
+    {
+        /// <summary>No last-push time for the source yet — nothing to compare against.</summary>
+        Unknown,
+        /// <summary>This sync has never run.</summary>
+        NeverSynced,
+        /// <summary>The source was pushed after the last successful run.</summary>
+        Behind,
+        /// <summary>The last run is newer than the source's last push.</summary>
+        UpToDate
+    }
+
     sealed class SyncRow(SyncMapping mapping)
     {
         public SyncMapping Mapping { get; set; } = mapping;
         public RunStatus Status { get; set; }
         public string? Message { get; set; }
         public List<string> Log { get; } = new();
+
+        /// <summary>Why this mapping can't run, or null when it's healthy.</summary>
+        public string? Issue { get; set; }
+
+        /// <summary>The one account that does monitor the source repo, when there's exactly one.</summary>
+        public MonitoredAccount? RepointTo { get; set; }
+
+        /// <summary>A healthy mapping already pushing this same source repo to this same destination.</summary>
+        public SyncMapping? SupersededBy { get; set; }
+
+        /// <summary>Another mapping writing to the same destination repo, healthy or not.</summary>
+        public SyncMapping? DuplicateDestination { get; set; }
+
+        public string? SourceUrl { get; set; }
+        public string? TargetUrl { get; set; }
+
+        /// <summary>Last push to the source repo — from the poller's cache, or an explicit check.</summary>
+        public DateTimeOffset? SourcePushedAt { get; set; }
+
+        /// <summary>Set when the timestamp came from this page's own check rather than the cache.</summary>
+        public bool Checked { get; set; }
+
+        public Freshness Freshness { get; set; }
+        public string? FreshnessDetail { get; set; }
+        public bool ShowDetails { get; set; }
+
+        public bool Blocked => this.Issue is not null;
     }
 
     readonly List<SyncRow> rows = new();
@@ -137,7 +305,17 @@
     bool gitMissing;
     string gitMessage = "";
     string? pendingDeleteId;
+    bool pendingCleanup;
     CancellationTokenSource? cts;
+
+    bool isChecking;
+    int checkedCount;
+    int checkTotal;
+
+    List<SyncRow> BlockedRows => rows.Where(r => r.Blocked).ToList();
+    List<SyncRow> SupersededRows => rows.Where(r => r.Blocked && r.SupersededBy is not null).ToList();
+    int BehindCount => rows.Count(r => !r.Blocked && r.Freshness == Freshness.Behind);
+    int UpToDateCount => rows.Count(r => !r.Blocked && r.Freshness == Freshness.UpToDate);
 
     protected override async Task OnInitializedAsync()
     {
@@ -177,7 +355,132 @@
 
         rows.Clear();
         rows.AddRange(rebuilt);
+
+        foreach (var row in rows)
+            Evaluate(row);
     }
+
+    /// <summary>
+    /// Works out up-front what <see cref="RepoSyncEngine"/> would only discover mid-run: a missing
+    /// account, a source repo that's no longer monitored, or a second mapping aimed at the same
+    /// destination repo. Also caches the two web links, which depend on the accounts.
+    /// </summary>
+    void Evaluate(SyncRow row)
+    {
+        var mapping = row.Mapping;
+        row.Issue = null;
+        row.RepointTo = null;
+        row.SupersededBy = null;
+        row.DuplicateDestination = null;
+
+        var source = Config.Accounts.FirstOrDefault(a => a.Id == mapping.SourceAccountId);
+        var target = Config.Accounts.FirstOrDefault(a => a.Id == mapping.TargetAccountId);
+
+        row.SourceUrl = source is null ? null : $"{source.WebBaseUrl}/{mapping.Source.FullName}";
+        row.TargetUrl = target is null ? null : $"{target.WebBaseUrl}/{mapping.TargetFullName}";
+
+        if (source is null)
+            row.Issue = "The source account for this sync no longer exists.";
+        else if (!Monitors(source, mapping.Source))
+            row.Issue = $"{mapping.Source.FullName} isn't monitored on {source.Label} any more.";
+        else if (target is null)
+            row.Issue = "The destination account for this sync no longer exists.";
+        else if (string.Equals(row.SourceUrl, row.TargetUrl, StringComparison.OrdinalIgnoreCase))
+            row.Issue = "The source and destination are the same repo — this sync can't do anything.";
+
+        if (row.Issue is not null)
+        {
+            var candidates = Config.Accounts.Where(a => Monitors(a, mapping.Source)).ToList();
+            if (candidates.Count == 1 && candidates[0].Id != mapping.SourceAccountId && target is not null)
+                row.RepointTo = candidates[0];
+        }
+
+        // Same source repo, same destination repo, different mapping — and the other one can
+        // actually run. That's the "left over from reorganising accounts" case, safe to delete.
+        row.SupersededBy = SyncStore.Mappings.FirstOrDefault(m =>
+            m.Id != mapping.Id &&
+            SameDestination(m, mapping) &&
+            string.Equals(m.Source.FullName, mapping.Source.FullName, StringComparison.OrdinalIgnoreCase) &&
+            Config.Accounts.FirstOrDefault(a => a.Id == m.SourceAccountId) is { } other &&
+            Monitors(other, m.Source));
+
+        // Any other mapping writing to the same target repo, even from a different source: two
+        // syncs racing at one destination overwrite each other, so it's worth surfacing.
+        row.DuplicateDestination = SyncStore.Mappings.FirstOrDefault(m =>
+            m.Id != mapping.Id && SameDestination(m, mapping));
+
+        // Free: the dashboard poller already stores the source repo's last push. An explicit
+        // check (row.Checked) wins, since it's newer than whatever the last poll left behind.
+        if (!row.Checked)
+            row.SourcePushedAt = Snapshots.TryGet(mapping.SourceAccountId, mapping.Source)?.PushedAt;
+
+        EvaluateFreshness(row);
+    }
+
+    /// <summary>
+    /// Compares the source's last push with this mapping's last run. It's a heuristic, not a ref
+    /// comparison: a push to a branch the mapping doesn't carry still reads as "behind", so it can
+    /// say "go and sync" when nothing would move. It never claims up-to-date when there are
+    /// commits to collect, which is the direction that matters for a backup.
+    /// </summary>
+    static void EvaluateFreshness(SyncRow row)
+    {
+        var lastRun = row.Mapping.LastSyncedUtc;
+        var pushed = row.SourcePushedAt;
+
+        if (lastRun is null)
+        {
+            row.Freshness = Freshness.NeverSynced;
+            row.FreshnessDetail = "This sync has never run.";
+        }
+        else if (pushed is null)
+        {
+            row.Freshness = Freshness.Unknown;
+            row.FreshnessDetail = "No last-push time for the source yet — use Check for changes.";
+        }
+        else if (pushed > lastRun)
+        {
+            row.Freshness = Freshness.Behind;
+            row.FreshnessDetail = $"Pushed {Ago(pushed.Value)}, {Humanise(pushed.Value - lastRun.Value)} after the last run.";
+        }
+        else
+        {
+            row.Freshness = Freshness.UpToDate;
+            row.FreshnessDetail = $"Last run {Ago(lastRun.Value)}; no push to the source since.";
+        }
+    }
+
+    static string LastSyncedLabel(SyncRow row)
+        => row.Mapping.LastSyncedUtc is { } when ? $"Synced {Ago(when)}" : "Never synced";
+
+    static string PushedAtText(SyncRow row)
+        => row.SourcePushedAt is { } when
+            ? $"{when.ToLocalTime():g} ({Ago(when)}){(row.Checked ? "" : " — from the last dashboard poll")}"
+            : "Unknown — nothing polled or checked this repo yet";
+
+    static string Ago(DateTimeOffset when)
+    {
+        var span = DateTimeOffset.UtcNow - when;
+        return span < TimeSpan.Zero ? "just now" : Humanise(span) + " ago";
+    }
+
+    static string Humanise(TimeSpan span) => span.TotalMinutes switch
+    {
+        < 1 => "moments",
+        < 60 => $"{(int)span.TotalMinutes}m",
+        < 60 * 24 => $"{(int)span.TotalHours}h",
+        < 60 * 24 * 30 => $"{(int)span.TotalDays}d",
+        _ => $"{(int)(span.TotalDays / 30)}mo"
+    };
+
+    static bool Monitors(MonitoredAccount account, MonitoredRepo repo)
+        => account.Repos.Any(r =>
+            string.Equals(r.Owner, repo.Owner, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(r.Name, repo.Name, StringComparison.OrdinalIgnoreCase));
+
+    static bool SameDestination(SyncMapping a, SyncMapping b)
+        => a.TargetAccountId == b.TargetAccountId &&
+           string.Equals(a.TargetFullName, b.TargetFullName, StringComparison.OrdinalIgnoreCase);
 
     void OnStoreChanged(object? sender, EventArgs e)
         => _ = InvokeAsync(() =>
@@ -202,9 +505,23 @@
 
     Task RunOneAsync(SyncRow row) => RunAsync(new[] { row });
 
-    Task RunAllAsync() => RunAsync(rows.ToList());
+    async Task RunAllAsync()
+    {
+        // Blocked rows would each throw from the engine and record a failure that says nothing the
+        // banner hasn't already said, so leave them out and report the count instead.
+        var runnable = rows.Where(r => !r.Blocked).ToList();
+        var skipped = rows.Count - runnable.Count;
 
-    async Task RunAsync(IReadOnlyList<SyncRow> targets)
+        if (runnable.Count == 0)
+        {
+            await Toast.InfoAsync($"Nothing to run — all {skipped} sync{(skipped == 1 ? "" : "s")} need attention first");
+            return;
+        }
+
+        await RunAsync(runnable, skipped);
+    }
+
+    async Task RunAsync(IReadOnlyList<SyncRow> targets, int skipped = 0)
     {
         if (isBusy || targets.Count == 0)
             return;
@@ -255,10 +572,11 @@
                 StateHasChanged();
             }
 
+            var skippedNote = skipped == 0 ? "" : $" ({skipped} skipped — needs attention)";
             if (failures == 0)
-                await Toast.SuccessAsync($"Synced {targets.Count} repo{(targets.Count == 1 ? "" : "s")}");
+                await Toast.SuccessAsync($"Synced {targets.Count} repo{(targets.Count == 1 ? "" : "s")}{skippedNote}");
             else
-                await Toast.DangerAsync($"{targets.Count - failures} of {targets.Count} synced, {failures} failed — open the run log for details");
+                await Toast.DangerAsync($"{targets.Count - failures} of {targets.Count} synced, {failures} failed{skippedNote} — open the run log for details");
         }
         catch (OperationCanceledException)
         {
@@ -278,6 +596,127 @@
         pendingDeleteId = null;
         await SyncStore.RemoveAsync(mapping.Id);
         await Toast.SuccessAsync($"Removed sync for {mapping.Source.FullName}");
+    }
+
+    /// <summary>
+    /// Repoints a mapping at the account that actually monitors its source repo. The previous
+    /// run result goes with it — it described the old, broken pairing.
+    /// </summary>
+    async Task RepointAsync(SyncRow row)
+    {
+        var account = row.RepointTo!;
+        var mapping = row.Mapping;
+
+        if (SyncStore.Mappings.Any(m =>
+                m.Id != mapping.Id &&
+                m.SourceAccountId == account.Id &&
+                string.Equals(m.Source.FullName, mapping.Source.FullName, StringComparison.OrdinalIgnoreCase) &&
+                SameDestination(m, mapping)))
+        {
+            await Toast.DangerAsync($"{account.Label} already syncs {mapping.Source.FullName} to {mapping.TargetFullName} — delete this one instead");
+            return;
+        }
+
+        await SyncStore.UpsertAsync(mapping with
+        {
+            SourceAccountId = account.Id,
+            LastSyncedUtc = null,
+            LastResult = null
+        });
+        await Toast.SuccessAsync($"{mapping.Source.FullName} now syncs from {account.Label}");
+    }
+
+    async Task CleanUpSupersededAsync()
+    {
+        pendingCleanup = false;
+        var doomed = SupersededRows.Select(r => r.Mapping).ToList();
+
+        foreach (var mapping in doomed)
+            await SyncStore.RemoveAsync(mapping.Id);
+
+        await Toast.SuccessAsync($"Removed {doomed.Count} sync{(doomed.Count == 1 ? "" : "s")} already covered by another");
+    }
+
+    /// <summary>
+    /// Fills in each source repo's last-push time. One request per distinct source repo — repos
+    /// the poller has already cached are skipped, and duplicate sources across mappings share a
+    /// single request, so the common case is a handful of conditional GETs that mostly 304.
+    /// </summary>
+    async Task CheckAllAsync()
+    {
+        if (isChecking || isBusy)
+            return;
+
+        var pending = rows
+            .Where(r => !r.Blocked)
+            .GroupBy(r => $"{r.Mapping.SourceAccountId}|{r.Mapping.Source.FullName}")
+            .ToList();
+
+        isChecking = true;
+        checkedCount = 0;
+        checkTotal = pending.Count;
+        var failures = 0;
+
+        try
+        {
+            foreach (var group in pending)
+            {
+                var first = group.First();
+                var account = Config.Accounts.FirstOrDefault(a => a.Id == first.Mapping.SourceAccountId);
+                if (account is null)
+                    continue;
+
+                try
+                {
+                    var provider = await Factory.CreateAsync(account);
+                    var info = provider is null
+                        ? null
+                        : await provider.GetRepoInfoAsync(first.Mapping.Source);
+
+                    foreach (var row in group)
+                    {
+                        row.SourcePushedAt = info?.PushedAt;
+                        row.Checked = true;
+                        EvaluateFreshness(row);
+                    }
+                }
+                catch (Exception)
+                {
+                    // One unreachable repo shouldn't abandon the sweep — the row just stays Unknown.
+                    failures++;
+                }
+
+                checkedCount++;
+                StateHasChanged();
+            }
+
+            var behind = BehindCount;
+            var note = failures == 0 ? "" : $" ({failures} couldn't be read)";
+            if (behind == 0)
+                await Toast.SuccessAsync($"Everything's up to date{note}");
+            else
+                await Toast.InfoAsync($"{behind} sync{(behind == 1 ? " is" : "s are")} behind{note}");
+        }
+        finally
+        {
+            isChecking = false;
+            StateHasChanged();
+        }
+    }
+
+    async Task OpenAsync(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+            return;
+
+        try
+        {
+            await Browser.OpenAsync(url, BrowserLaunchMode.External);
+        }
+        catch (Exception ex)
+        {
+            await Toast.DangerAsync($"Couldn't open {url}: {ex.Message}");
+        }
     }
 
     public void Dispose()

@@ -1,6 +1,7 @@
 @page "/accounts"
 @implements IDisposable
 @inject IConfigStore Config
+@inject ISyncStore SyncStore
 @inject NavigationManager Nav
 @inject IToastService Toast
 
@@ -90,7 +91,14 @@
     {
         pendingDeleteId = null;
         await Config.RemoveAccountAsync(account.Id);
-        await Toast.SuccessAsync($"Removed {account.Label}");
+
+        // Nothing can sync from — or to — an account that's gone.
+        var pruned = await SyncStore.PruneForRemovedAccountAsync(account.Id);
+
+        var syncNote = pruned.Count == 0
+            ? ""
+            : $" and {pruned.Count} sync{(pruned.Count == 1 ? "" : "s")}";
+        await Toast.SuccessAsync($"Removed {account.Label}{syncNote}");
     }
 
     public void Dispose()

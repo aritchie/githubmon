@@ -20,6 +20,17 @@ using Microsoft.Maui.Platforms.Linux.Gtk4.BlazorWebView;
 using Microsoft.Maui.Platforms.Linux.Gtk4.Essentials.Hosting;
 using Microsoft.Maui.Platforms.Linux.Gtk4.Hosting;
 #endif
+#if DEBUG
+// DevFlow's GTK build exposes the same two extension methods under .Gtk namespaces, so only the
+// usings differ per head — the call site below is shared.
+#if LINUX
+using Microsoft.Maui.DevFlow.Agent.Gtk;
+using Microsoft.Maui.DevFlow.Blazor.Gtk;
+#else
+using Microsoft.Maui.DevFlow.Agent;
+using Microsoft.Maui.DevFlow.Blazor;
+#endif
+#endif
 
 namespace GitHubShine;
 
@@ -67,6 +78,12 @@ public static class MauiProgram
 #endif
 #if LINUX
         builder.Services.AddLinuxGtk4BlazorWebView();
+
+        // Without this the GTK head dies during Build(): ConfigStore takes a keyed
+        // IKeyValueStore (StoreKeys.Default) that the other heads get from their platform
+        // hosting, and nothing on Linux registers one — "No keyed service for type
+        // 'Shiny.Extensions.Stores.IKeyValueStore'". Found by actually running the GTK head.
+        builder.Services.AddShinyStores();
 #endif
         builder.Services.AddShinyToast();
 
@@ -146,6 +163,12 @@ public static class MauiProgram
         builder.Logging.AddDebug();
         builder.Logging.AddConsole();
         builder.Logging.SetMinimumLevel(LogLevel.Debug);
+
+        // MAUI DevFlow — in-app agent the `maui devflow` CLI drives for visual-tree inspection,
+        // taps and screenshots, plus the Blazor tools that reach the WebView contents over CDP.
+        // Debug-only by design: it opens a local HTTP server for the CLI to connect to.
+        builder.AddMauiDevFlowAgent();
+        builder.AddMauiBlazorDevFlowTools();
 #endif
 
         var app = builder.Build();

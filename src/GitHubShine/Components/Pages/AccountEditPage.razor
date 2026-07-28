@@ -3,6 +3,7 @@
 @inject ITokenVault Vault
 @inject IConfigStore Config
 @inject IGitProviderFactory Factory
+@inject ISyncStore SyncStore
 @inject NavigationManager Nav
 @inject IToastService Toast
 
@@ -398,7 +399,15 @@
                 await Vault.SetTokenAsync(id, token);
             // Drop any cached provider so provider-type / host / token edits take effect.
             Factory.Invalidate(id);
-            await Toast.SuccessAsync($"Saved {label.Trim()} — {repos.Count} repo(s)");
+
+            // Unticking a repo here also retires its syncs — a mapping reading a repo the account
+            // no longer monitors can only fail when it runs.
+            var pruned = await SyncStore.PruneForAccountAsync(id, repos);
+
+            var syncNote = pruned.Count == 0
+                ? ""
+                : $", removed {pruned.Count} sync{(pruned.Count == 1 ? "" : "s")}";
+            await Toast.SuccessAsync($"Saved {label.Trim()} — {repos.Count} repo(s){syncNote}");
             Nav.NavigateTo("/accounts");
         }
         catch (Exception ex)

@@ -10,7 +10,10 @@ public sealed record RepoSnapshot(
     int Watchers,
     IReadOnlyList<PullRequestSummary> OpenPullRequests,
     IReadOnlyList<WorkflowRunSummary> RecentWorkflowRuns,
-    string? ErrorMessage)
+    string? ErrorMessage,
+    // Last push to the repo. Rides along on the poll the dashboard already runs, which is what
+    // lets the sync list answer "is this backup behind?" without a request of its own.
+    DateTimeOffset? PushedAt = null)
 {
     public bool HasError => ErrorMessage is not null;
 

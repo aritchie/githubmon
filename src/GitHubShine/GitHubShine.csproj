@@ -86,6 +86,23 @@
 	<ItemGroup Condition="'$(_IsMobile)' != 'true'">
 		<PackageReference Include="Shiny.Maui.Controls.Desktop"/>
 	</ItemGroup>
+
+	<!-- MAUI DevFlow: the CLI's in-app agent, plus the Blazor tools that expose the WebView over
+	     CDP (this app's UI is entirely Blazor, so without the second package the tree stops at the
+	     WebView). Registration is #if DEBUG in MauiProgram; the references stay unconditional so
+	     restore doesn't have to differ per configuration.
+	     The base packages ship android/ios/maccatalyst/macos/windows assets — including
+	     net10.0-macos, so the labs AppKit head is covered — while the GTK4 Linux head (plain
+	     net10.0) needs the .Gtk pair instead. -->
+	<ItemGroup Condition="'$(_IsLinux)' != 'true'">
+		<PackageReference Include="Microsoft.Maui.DevFlow.Agent" />
+		<PackageReference Include="Microsoft.Maui.DevFlow.Blazor" />
+	</ItemGroup>
+
+	<ItemGroup Condition="'$(_IsLinux)' == 'true'">
+		<PackageReference Include="Microsoft.Maui.DevFlow.Agent.Gtk" />
+		<PackageReference Include="Microsoft.Maui.DevFlow.Blazor.Gtk" />
+	</ItemGroup>
 	
 	<ItemGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'macos'">
 		<PackageReference Include="Microsoft.Maui.Platforms.MacOS" />

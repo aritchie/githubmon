@@ -1,6 +1,7 @@
 @page "/accounts/repos"
 @inject IConfigStore Config
 @inject IGitProviderFactory Factory
+@inject ISyncStore SyncStore
 @inject NavigationManager Nav
 @inject IToastService Toast
 
@@ -303,6 +304,7 @@
         isSaving = true;
         errorMessage = null;
         var changedAccounts = 0;
+        var prunedSyncs = 0;
         try
         {
             foreach (var account in Config.Accounts)
@@ -318,15 +320,25 @@
 
                 await Config.UpsertAccountAsync(account with { Repos = repos });
                 changedAccounts++;
+
+                // Unticking a repo retires its syncs too — see AccountEditPage.SaveAsync.
+                prunedSyncs += (await SyncStore.PruneForAccountAsync(account.Id, repos)).Count;
             }
 
             foreach (var row in rows)
                 row.OriginallySelected = row.Selected;
 
             if (changedAccounts == 0)
+            {
                 await Toast.InfoAsync("Nothing to save");
+            }
             else
-                await Toast.SuccessAsync($"Updated {changedAccounts} account{(changedAccounts == 1 ? "" : "s")} — now monitoring {SelectedCount} repos");
+            {
+                var syncNote = prunedSyncs == 0
+                    ? ""
+                    : $", removed {prunedSyncs} sync{(prunedSyncs == 1 ? "" : "s")}";
+                await Toast.SuccessAsync($"Updated {changedAccounts} account{(changedAccounts == 1 ? "" : "s")} — now monitoring {SelectedCount} repos{syncNote}");
+            }
         }
         catch (Exception ex)
         {

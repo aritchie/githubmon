@@ -122,6 +122,12 @@
                                 {
                                     <Pill Text="Already configured" Type="PillType.Info" />
                                 }
+                                else if (row.DestinationTakenBy is not null)
+                                {
+                                    <span title="@($"{TargetOwnerPreview}/{row.Repo.Name} is already the destination for {row.DestinationTakenBy}")">
+                                        <Pill Text="Destination in use" Type="PillType.Warning" />
+                                    </span>
+                                }
                                 else if (row.IsSelfTarget)
                                 {
                                     <span title="The destination would be this exact repo">
@@ -154,13 +160,19 @@
         public string Key => $"{this.Account.Id}|{this.Repo.FullName}";
         public bool Selected { get; set; }
 
-        /// <summary>A mapping for this source→destination pair already exists.</summary>
+        /// <summary>A mapping for this exact source→destination pair already exists.</summary>
         public bool AlreadyConfigured { get; set; }
+
+        /// <summary>
+        /// A different source already backs up to the destination repo this row would write to.
+        /// Creating a second mapping would have both pushing at one repo, each undoing the other.
+        /// </summary>
+        public string? DestinationTakenBy { get; set; }
 
         /// <summary>The destination resolves to this very repo, so syncing it would be a no-op.</summary>
         public bool IsSelfTarget { get; set; }
 
-        public bool Blocked => this.AlreadyConfigured || this.IsSelfTarget;
+        public bool Blocked => this.AlreadyConfigured || this.IsSelfTarget || this.DestinationTakenBy is not null;
     }
 
     string targetAccountId = "";
@@ -177,6 +189,9 @@
     readonly List<RepoRow> rows = new();
 
     MonitoredAccount? TargetAccount => Config.Accounts.FirstOrDefault(a => a.Id == targetAccountId);
+
+    string AccountLabel(string accountId)
+        => Config.Accounts.FirstOrDefault(a => a.Id == accountId)?.Label ?? "(deleted account)";
 
     string TargetOwnerPreview => string.IsNullOrWhiteSpace(targetOwner)
         ? (TargetAccount?.Username ?? "owner")
@@ -223,18 +238,33 @@
         {
             foreach (var repo in account.Repos)
             {
-                var exists = SyncStore.Mappings.Any(m =>
-                    m.SourceAccountId == account.Id &&
-                    string.Equals(m.Source.FullName, repo.FullName, StringComparison.OrdinalIgnoreCase) &&
+                // Matched on the DESTINATION, not the source account: after moving repos between
+                // accounts, a re-run here would otherwise look "new" and create a second mapping
+                // pushing to a repo that's already being written to.
+                var clash = SyncStore.Mappings.FirstOrDefault(m =>
                     m.TargetAccountId == targetAccountId &&
-                    string.Equals(m.TargetOwner, owner, StringComparison.OrdinalIgnoreCase));
+                    string.Equals(m.TargetOwner, owner, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(m.EffectiveTargetName, repo.Name, StringComparison.OrdinalIgnoreCase));
 
-                var selfTarget = account.Id == targetAccountId &&
-                    string.Equals(owner, repo.Owner, StringComparison.OrdinalIgnoreCase);
+                var sameSource = clash is not null &&
+                    clash.SourceAccountId == account.Id &&
+                    string.Equals(clash.Source.FullName, repo.FullName, StringComparison.OrdinalIgnoreCase);
+
+                // Compared by host + owner rather than account id: two accounts can point at the
+                // same server, and "back github.com/me/x up to github.com/me/x" is a no-op the
+                // account-id check used to wave through.
+                var selfTarget = TargetAccount is { } destination &&
+                    string.Equals(
+                        $"{account.WebBaseUrl}/{repo.Owner}",
+                        $"{destination.WebBaseUrl}/{owner}",
+                        StringComparison.OrdinalIgnoreCase);
 
                 var row = new RepoRow(account, repo)
                 {
-                    AlreadyConfigured = exists,
+                    AlreadyConfigured = sameSource,
+                    DestinationTakenBy = clash is null || sameSource
+                        ? null
+                        : $"{AccountLabel(clash.SourceAccountId)}: {clash.Source.FullName}",
                     IsSelfTarget = selfTarget
                 };
                 row.Selected = !row.Blocked && keep.Contains(row.Key);
@@ -299,6 +329,22 @@
         var picked = rows.Where(r => r.Selected && !r.Blocked).ToList();
         if (picked.Count == 0)
             return;
+
+        // Two picked rows can still resolve to one destination repo (say shinyorg/shiny and
+        // aritchie/shiny both landing on <owner>/shiny) — Rebuild only compares against what's
+        // already saved, so catch the within-batch case here rather than creating both.
+        var collisions = picked
+            .GroupBy(r => r.Repo.Name, StringComparer.OrdinalIgnoreCase)
+            .Where(g => g.Count() > 1)
+            .ToList();
+
+        if (collisions.Count > 0)
+        {
+            var first = collisions[0];
+            errorMessage = $"{first.Count()} selected repos would all sync to {owner}/{first.Key} " +
+                $"({string.Join(", ", first.Select(r => r.Repo.FullName))}). Deselect all but one.";
+            return;
+        }
 
         isSaving = true;
         var created = 0;

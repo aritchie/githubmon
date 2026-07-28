@@ -26,5 +26,11 @@
         <PackageVersion Include="Microsoft.Maui.Platforms.Linux.Gtk4.Essentials" Version="$(MauiLabsVersion)"/>
         <PackageVersion Include="Microsoft.Maui.Platforms.Linux.Gtk4.BlazorWebView" Version="$(MauiLabsVersion)"/>
         <PackageVersion Include="Octokit" Version="14.0.0"/>
+        <!-- MAUI DevFlow ships in lockstep with the labs platform packages, so it rides the same
+             version property. The .Gtk pair is the Linux/GTK4 flavour of the same two libraries. -->
+        <PackageVersion Include="Microsoft.Maui.DevFlow.Agent" Version="$(MauiLabsVersion)"/>
+        <PackageVersion Include="Microsoft.Maui.DevFlow.Blazor" Version="$(MauiLabsVersion)"/>
+        <PackageVersion Include="Microsoft.Maui.DevFlow.Agent.Gtk" Version="$(MauiLabsVersion)"/>
+        <PackageVersion Include="Microsoft.Maui.DevFlow.Blazor.Gtk" Version="$(MauiLabsVersion)"/>
     </ItemGroup>
 </Project>

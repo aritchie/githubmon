@@ -58,7 +58,8 @@ public sealed class GitHubProvider : IGitProvider
             Math.Max(0, r.OpenIssuesCount - prs.Count),
             r.StargazersCount,
             r.ForksCount,
-            r.SubscribersCount);
+            r.SubscribersCount,
+            r.PushedAt);
 
         var prSummaries = prs
             .Select(p => new PullRequestSummary(
@@ -187,7 +188,8 @@ public sealed class GitHubProvider : IGitProvider
         r.Description,
         r.Private,
         string.IsNullOrWhiteSpace(r.DefaultBranch) ? "main" : r.DefaultBranch,
-        r.CloneUrl);
+        r.CloneUrl,
+        r.PushedAt);
 
     static DateTimeOffset ParseDate(string? s)
         => DateTimeOffset.TryParse(s, out var d) ? d : DateTimeOffset.UtcNow;

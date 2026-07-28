@@ -388,27 +388,95 @@ input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px;
 
 .sync-row {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 12px;
     flex-wrap: wrap;
 }
 
-.sync-row .sync-body { flex: 1; min-width: 220px; }
+/* min-width:0 is the fix for badges pushing the buttons off the row: without it a flex item
+   refuses to shrink below its content width, so one long repo name widened the text column
+   until the actions had nowhere to go. flex-basis keeps it from collapsing to nothing. */
+.sync-row .sync-body { flex: 1 1 260px; min-width: 0; }
 .sync-row .meta { color: var(--fg-muted); font-size: 12px; }
-.sync-row .sync-status { display: flex; align-items: center; min-width: 24px; }
+
+/* Badges stack in their own fixed column so their width never depends on the repo name. */
+.sync-row .sync-status {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 4px;
+    flex: 0 0 auto;
+    min-width: 90px;
+    padding-top: 2px;
+}
 
 .sync-route {
     display: flex;
-    align-items: center;
+    align-items: baseline;
     gap: 8px;
     flex-wrap: wrap;
-    word-break: break-word;
+    overflow-wrap: anywhere;
 }
 
 .sync-route .sync-arrow { color: var(--fg-muted); }
 
 .sync-warning { border-color: var(--warning, #d29922); }
 .sync-warning .meta { color: var(--fg-muted); font-size: 12px; margin-top: 4px; }
+
+.sync-row-blocked { border-color: var(--warning, #d29922); }
+
+.sync-row .sync-issue {
+    color: var(--warning, #d29922);
+    font-size: 12px;
+    margin-top: 4px;
+}
+
+/* Actions sit in their own column and wrap as a block, so adding a button can't scatter the
+   others onto ragged lines the way a flat button list did. */
+.sync-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    align-items: flex-end;
+    flex: 0 0 auto;
+}
+
+.sync-actions-row {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+.sync-row .btn.subtle {
+    background: transparent;
+    border-color: transparent;
+    color: var(--fg-muted);
+    padding-inline: 8px;
+}
+
+.sync-row .btn.subtle:hover:not(:disabled) {
+    background: var(--bg-hover, rgba(127, 127, 127, .12));
+    border-color: var(--border);
+    color: inherit;
+}
+
+.sync-row .btn.subtle.danger { color: var(--danger, #d1242f); }
+.sync-row .btn.active { border-color: var(--accent, #0969da); }
+
+.sync-details {
+    margin-top: 6px;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 12px;
+    display: grid;
+    gap: 3px;
+}
+
+.sync-details .muted { display: inline-block; min-width: 118px; color: var(--fg-muted); }
+
+.warn-text { color: var(--warning, #d29922); }
 
 .sync-log {
     margin-top: 8px;

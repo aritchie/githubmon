@@ -14,7 +14,12 @@ public enum GitProviderType
 /// <see cref="OpenIssues"/> in its own way (GitHub derives it from the issues
 /// count minus PRs; Gitea exposes a dedicated PR counter).
 /// </summary>
-public sealed record RepoStats(int OpenIssues, int Stars, int Forks, int Watchers);
+/// <param name="PushedAt">
+/// When the repo last received a push, straight off the repo payload both providers already
+/// fetch for the counts. The sync list compares it against a mapping's last run to say whether
+/// a backup is behind without spending an API call of its own.
+/// </param>
+public sealed record RepoStats(int OpenIssues, int Stars, int Forks, int Watchers, DateTimeOffset? PushedAt = null);
 
 public sealed record GitUserInfo(string Login);
 
@@ -47,7 +52,10 @@ public sealed record GitRepoInfo(
     string? Description,
     bool Private,
     string DefaultBranch,
-    string CloneUrl)
+    string CloneUrl,
+    // Last push to any branch — free here (the repo payload is already being read) and the basis
+    // for the sync list's "behind" check.
+    DateTimeOffset? PushedAt = null)
 {
     public string FullName => $"{Owner}/{Name}";
 }

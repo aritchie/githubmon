@@ -49,7 +49,8 @@ public sealed class GiteaProvider : IGitProvider
             GetInt(root, "open_issues_count"),
             GetInt(root, "stars_count"),
             GetInt(root, "forks_count"),
-            GetInt(root, "watchers_count"));
+            GetInt(root, "watchers_count"),
+            GetPushedAt(root));
     }
 
     async Task<IReadOnlyList<PullRequestSummary>> GetOpenPullRequestsAsync(MonitoredRepo repo, CancellationToken ct = default)
@@ -232,7 +233,8 @@ public sealed class GiteaProvider : IGitProvider
         GetString(r, "description"),
         GetBool(r, "private"),
         GetString(r, "default_branch") is { Length: > 0 } b ? b : "main",
-        GetString(r, "clone_url") ?? "");
+        GetString(r, "clone_url") ?? "",
+        GetPushedAt(r));
 
     async Task<JsonDocument> GetJsonAsync(string relativeUrl, CancellationToken ct)
     {
@@ -307,6 +309,21 @@ public sealed class GiteaProvider : IGitProvider
 
     static DateTimeOffset GetDate(JsonElement e, string name)
         => DateTimeOffset.TryParse(GetString(e, name), out var d) ? d : DateTimeOffset.UtcNow;
+
+    /// <summary>
+    /// Like <see cref="GetDate"/> but null when the field is absent or unparseable. GetDate's
+    /// "now" fallback would read as "just pushed" to the sync list's behind check.
+    /// </summary>
+    static DateTimeOffset? GetDateOrNull(JsonElement e, string name)
+        => DateTimeOffset.TryParse(GetString(e, name), out var d) ? d : null;
+
+    /// <summary>
+    /// Gitea has no dedicated pushed_at (Forgejo and newer builds sometimes do), so fall back to
+    /// updated_at. That also moves on non-push edits like a description change, which can only
+    /// make the sync list read "behind" when it isn't — never the reverse.
+    /// </summary>
+    static DateTimeOffset? GetPushedAt(JsonElement r)
+        => GetDateOrNull(r, "pushed_at") ?? GetDateOrNull(r, "updated_at");
 
     static InboxReason MapReason(string? reason) => reason?.ToLowerInvariant() switch
     {
