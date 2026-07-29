@@ -80,12 +80,24 @@
                     {
                         <text> · </text><strong class="warn-text">@BehindCount behind</strong>
                     }
+                    @if (NeverSyncedCount > 0)
+                    {
+                        <text> · @NeverSyncedCount never run</text>
+                    }
                     @if (UpToDateCount > 0)
                     {
                         <text> · @UpToDateCount up to date</text>
                     }
                 </span>
                 <span class="spacer" style="flex:1;"></span>
+                <select value="@filter" @onchange="OnFilterChanged" disabled="@isBusy"
+                        title="Show only the syncs in this state">
+                    <option value="@RowFilter.All">All (@rows.Count)</option>
+                    <option value="@RowFilter.Behind">Behind (@BehindCount)</option>
+                    <option value="@RowFilter.NeverSynced">Never run (@NeverSyncedCount)</option>
+                    <option value="@RowFilter.UpToDate">Up to date (@UpToDateCount)</option>
+                    <option value="@RowFilter.NeedsAttention">Needs attention (@BlockedRows.Count)</option>
+                </select>
                 @if (isChecking)
                 {
                     <span class="spinner"></span>
@@ -105,12 +117,27 @@
                 }
                 else
                 {
-                    <button class="btn primary" @onclick="RunAllAsync" disabled="@isChecking">Run all</button>
+                    <button class="btn" @onclick="RunBehindAsync" disabled="@(isChecking || BehindCount == 0)"
+                            title="@(BehindCount == 0
+                                ? "Nothing is known to be behind — run Check for changes first"
+                                : "Runs only the syncs whose source was pushed after their last run")">
+                        Sync behind (@BehindCount)
+                    </button>
+                    <button class="btn primary" @onclick="RunVisibleAsync" disabled="@(isChecking || RunnableVisible.Count == 0)">
+                        @(filter == RowFilter.All ? "Run all" : $"Run {RunnableVisible.Count} shown")
+                    </button>
                 }
             </div>
         </div>
 
-        @foreach (var row in rows)
+        @if (VisibleRows.Count == 0)
+        {
+            <div class="card">
+                <span class="muted">No syncs are @FilterLabel(filter).</span>
+            </div>
+        }
+
+        @foreach (var row in VisibleRows)
         {
             <div class="card sync-row @(row.Blocked ? "sync-row-blocked" : "")" @key="row.Mapping.Id">
                 <div class="sync-body">
@@ -265,6 +292,9 @@
         UpToDate
     }
 
+    /// <summary>Which rows the list shows. Counts in the picker come from the same rules.</summary>
+    enum RowFilter { All, Behind, NeverSynced, UpToDate, NeedsAttention }
+
     sealed class SyncRow(SyncMapping mapping)
     {
         public SyncMapping Mapping { get; set; } = mapping;
@@ -312,10 +342,51 @@
     int checkedCount;
     int checkTotal;
 
+    RowFilter filter = RowFilter.All;
+
     List<SyncRow> BlockedRows => rows.Where(r => r.Blocked).ToList();
     List<SyncRow> SupersededRows => rows.Where(r => r.Blocked && r.SupersededBy is not null).ToList();
-    int BehindCount => rows.Count(r => !r.Blocked && r.Freshness == Freshness.Behind);
+
+    /// <summary>Rows whose source was pushed after their last run — what "Sync behind" runs.</summary>
+    List<SyncRow> BehindRows => rows.Where(r => !r.Blocked && r.Freshness == Freshness.Behind).ToList();
+
+    int BehindCount => BehindRows.Count;
+    int NeverSyncedCount => rows.Count(r => !r.Blocked && r.Freshness == Freshness.NeverSynced);
     int UpToDateCount => rows.Count(r => !r.Blocked && r.Freshness == Freshness.UpToDate);
+
+    List<SyncRow> VisibleRows => rows.Where(Matches).ToList();
+
+    /// <summary>The visible rows a run could actually touch — blocked ones would only fail.</summary>
+    List<SyncRow> RunnableVisible => VisibleRows.Where(r => !r.Blocked).ToList();
+
+    bool Matches(SyncRow row)
+    {
+        // A row this page has just run stays put whatever the filter says: syncing a "behind" row
+        // makes it up to date, and having it (and its run log) vanish mid-run reads as a crash.
+        if (row.Status != RunStatus.Idle)
+            return true;
+
+        return filter switch
+        {
+            RowFilter.Behind => !row.Blocked && row.Freshness == Freshness.Behind,
+            RowFilter.NeverSynced => !row.Blocked && row.Freshness == Freshness.NeverSynced,
+            RowFilter.UpToDate => !row.Blocked && row.Freshness == Freshness.UpToDate,
+            RowFilter.NeedsAttention => row.Blocked,
+            _ => true
+        };
+    }
+
+    static string FilterLabel(RowFilter value) => value switch
+    {
+        RowFilter.Behind => "behind — try Check for changes",
+        RowFilter.NeverSynced => "waiting for a first run",
+        RowFilter.UpToDate => "known to be up to date",
+        RowFilter.NeedsAttention => "in need of attention",
+        _ => "configured"
+    };
+
+    void OnFilterChanged(ChangeEventArgs e)
+        => filter = Enum.TryParse<RowFilter>(e.Value?.ToString(), out var value) ? value : RowFilter.All;
 
     protected override async Task OnInitializedAsync()
     {
@@ -505,12 +576,17 @@
 
     Task RunOneAsync(SyncRow row) => RunAsync(new[] { row });
 
-    async Task RunAllAsync()
+    /// <summary>
+    /// Runs what the list is currently showing, so a filtered view and its button agree. With no
+    /// filter that's every sync, which is what "Run all" has always meant.
+    /// </summary>
+    async Task RunVisibleAsync()
     {
         // Blocked rows would each throw from the engine and record a failure that says nothing the
         // banner hasn't already said, so leave them out and report the count instead.
-        var runnable = rows.Where(r => !r.Blocked).ToList();
-        var skipped = rows.Count - runnable.Count;
+        var visible = VisibleRows;
+        var runnable = visible.Where(r => !r.Blocked).ToList();
+        var skipped = visible.Count - runnable.Count;
 
         if (runnable.Count == 0)
         {
@@ -519,6 +595,23 @@
         }
 
         await RunAsync(runnable, skipped);
+    }
+
+    /// <summary>
+    /// Runs only the syncs whose source has been pushed since their last run. "Behind" comes from
+    /// the same push-time heuristic the badges use, so it's only as fresh as the last poll or
+    /// Check for changes — never-run syncs are deliberately not included; they have their own filter.
+    /// </summary>
+    async Task RunBehindAsync()
+    {
+        var behind = BehindRows;
+        if (behind.Count == 0)
+        {
+            await Toast.InfoAsync("Nothing is known to be behind — run Check for changes first");
+            return;
+        }
+
+        await RunAsync(behind);
     }
 
     async Task RunAsync(IReadOnlyList<SyncRow> targets, int skipped = 0)

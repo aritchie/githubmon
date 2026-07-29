@@ -28,32 +28,34 @@
             <div class="section-title">Source</div>
 
             <div class="field">
-                <label>Account</label>
-                <select value="@sourceAccountId" @onchange="OnSourceAccountChanged">
-                    @foreach (var account in Config.Accounts)
-                    {
-                        <option value="@account.Id">@account.Label (@account.Repos.Count repos)</option>
-                    }
-                </select>
-            </div>
-
-            <div class="field">
                 <label>
                     Repository
-                    <span class="hint">— only repos linked to the account above can be synced</span>
+                    <span class="hint">— every monitored repo, across all accounts</span>
                 </label>
-                @if (SourceRepos.Count == 0)
+                @if (sourceChoices.Count == 0)
                 {
-                    <div class="hint">This account has no monitored repos. Add some on its account page first.</div>
+                    <div class="hint">No account monitors any repos yet. Add some on the Accounts page first.</div>
                 }
                 else
                 {
-                    <select value="@sourceRepoFullName" @onchange="OnSourceRepoChanged">
-                        @foreach (var repo in SourceRepos)
+                    <Autocomplete TItem="SourceChoice"
+                                  Items="sourceChoices"
+                                  Value="SelectedSource"
+                                  ValueChanged="OnSourceChosen"
+                                  ItemText="@(c => c.Repo.FullName)"
+                                  ItemDetail="@(c => c.Account.Label)"
+                                  Placeholder="Type to search repos…"
+                                  EmptyText="No monitored repo matches — add it to an account first" />
+                    <div class="hint">
+                        @if (SelectedSource is { } chosen)
                         {
-                            <option value="@repo.FullName">@repo.FullName</option>
+                            <text>Reads from <strong>@chosen.Account.Label</strong>.</text>
                         }
-                    </select>
+                        else
+                        {
+                            <text>@sourceChoices.Count repo@(sourceChoices.Count == 1 ? "" : "s") available.</text>
+                        }
+                    </div>
                 }
             </div>
         </div>
@@ -179,6 +181,9 @@
         public bool OnSource { get; set; } = onSource;
     }
 
+    /// <summary>One pickable source: a monitored repo plus the account it's monitored on.</summary>
+    sealed record SourceChoice(MonitoredAccount Account, MonitoredRepo Repo);
+
     [Parameter] public string? Id { get; set; }
 
     string sourceAccountId = "";
@@ -194,10 +199,14 @@
     string? errorMessage;
 
     readonly List<BranchChoice> branches = new();
+    readonly List<SourceChoice> sourceChoices = new();
 
     MonitoredAccount? SourceAccount => Config.Accounts.FirstOrDefault(a => a.Id == sourceAccountId);
     MonitoredAccount? TargetAccount => Config.Accounts.FirstOrDefault(a => a.Id == targetAccountId);
-    IReadOnlyList<MonitoredRepo> SourceRepos => SourceAccount?.Repos ?? (IReadOnlyList<MonitoredRepo>)Array.Empty<MonitoredRepo>();
+
+    SourceChoice? SelectedSource => sourceChoices.FirstOrDefault(c =>
+        c.Account.Id == sourceAccountId &&
+        string.Equals(c.Repo.FullName, sourceRepoFullName, StringComparison.OrdinalIgnoreCase));
 
     string SourceRepoName => sourceRepoFullName.Split('/').LastOrDefault() ?? "";
 
@@ -216,6 +225,13 @@
         await Config.ReloadAsync();
         await SyncStore.ReloadAsync();
 
+        // Flattened across accounts so the picker never hides a repo behind an account dropdown —
+        // the same repo monitored on two accounts shows up twice, told apart by the account label.
+        sourceChoices.AddRange(Config.Accounts
+            .SelectMany(a => a.Repos.Select(r => new SourceChoice(a, r)))
+            .OrderBy(c => c.Repo.FullName, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(c => c.Account.Label, StringComparer.OrdinalIgnoreCase));
+
         var existing = Id is null ? null : SyncStore.Mappings.FirstOrDefault(m => m.Id == Id);
         if (existing is not null)
         {
@@ -231,12 +247,18 @@
             // Show the saved branches immediately; "Load branches" merges in the live list.
             foreach (var branch in existing.Branches ?? new List<string>())
                 branches.Add(new BranchChoice(branch, selected: true, onSource: true));
+
+            // A saved source the account no longer monitors isn't in the list above; keep it
+            // pickable so editing anything else doesn't silently blank the source.
+            if (SelectedSource is null && SourceAccount is { } account)
+                sourceChoices.Insert(0, new SourceChoice(account, existing.Source));
         }
         else
         {
+            // No pre-selected source: the picker starts empty rather than quietly pointing at
+            // whichever repo happened to sort first.
             var first = Config.Accounts.FirstOrDefault(a => a.Repos.Count > 0) ?? Config.Accounts.FirstOrDefault();
             sourceAccountId = first?.Id ?? "";
-            sourceRepoFullName = first?.Repos.FirstOrDefault()?.FullName ?? "";
 
             // Default the target to a different account when there is one — the common case is
             // pushing from a hosted account to a self-hosted backup server.
@@ -246,16 +268,10 @@
         }
     }
 
-    void OnSourceAccountChanged(ChangeEventArgs e)
+    void OnSourceChosen(SourceChoice choice)
     {
-        sourceAccountId = e.Value?.ToString() ?? "";
-        sourceRepoFullName = SourceRepos.FirstOrDefault()?.FullName ?? "";
-        branches.Clear();
-    }
-
-    void OnSourceRepoChanged(ChangeEventArgs e)
-    {
-        sourceRepoFullName = e.Value?.ToString() ?? "";
+        sourceAccountId = choice.Account.Id;
+        sourceRepoFullName = choice.Repo.FullName;
         branches.Clear();
     }
 

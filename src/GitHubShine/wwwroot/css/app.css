@@ -523,6 +523,47 @@ input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px;
 .muted { color: var(--fg-muted); }
 .danger-text { color: var(--danger); }
 
+/* ---------- Autocomplete ---------- */
+
+.ac { position: relative; }
+.ac .ac-input { width: 100%; }
+
+.ac-list {
+    position: absolute;
+    z-index: 30;
+    top: calc(100% + 2px);
+    left: 0;
+    right: 0;
+    max-height: 300px;
+    overflow-y: auto;
+    background: var(--card, var(--bg));
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, .28);
+}
+
+.ac-row {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    padding: 7px 12px;
+    cursor: pointer;
+    font-size: 14px;
+}
+
+.ac-row .name { flex-shrink: 0; }
+.ac-row .desc {
+    color: var(--fg-muted);
+    font-size: 12px;
+    margin-left: auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ac-row.ac-active { background: var(--card-subtle); }
+.ac-row.ac-empty { color: var(--fg-muted); font-size: 12px; cursor: default; }
+
 /* ---------- Settings ---------- */
 
 .card h2 { margin-bottom: 12px; }

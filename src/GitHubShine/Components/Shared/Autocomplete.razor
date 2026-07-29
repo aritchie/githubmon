@@ -1,0 +1,152 @@
+@typeparam TItem
+@*
+    A type-to-filter picker for lists that are too long for a <select>. Matching is token-based:
+    every whitespace-separated word must appear somewhere in the item's text or detail, so
+    "shiny mediator" finds "shinyorg/Shiny.Mediator" regardless of the order they're typed.
+*@
+
+<div class="ac">
+    <input type="text" class="ac-input" value="@Display" @oninput="OnInput" @onfocus="OnFocus"
+           @onblur="OnBlur" @onkeydown="OnKeyDown" autocomplete="off" spellcheck="false"
+           placeholder="@EffectivePlaceholder" disabled="@Disabled" />
+
+    @if (open)
+    {
+        <div class="ac-list">
+            @if (Matches.Count == 0)
+            {
+                <div class="ac-row ac-empty">@(EmptyText ?? "No matches")</div>
+            }
+            else
+            {
+                @for (var i = 0; i < Matches.Count; i++)
+                {
+                    var index = i;
+                    var item = Matches[i];
+                    <div class="ac-row @(index == highlight ? "ac-active" : "")" @key="ItemText(item) + index"
+                         @onmousedown:preventDefault="true"
+                         @onmousedown="() => SelectAsync(item)"
+                         @onmouseover="() => highlight = index">
+                        <span class="name">@ItemText(item)</span>
+                        @if (ItemDetail is not null)
+                        {
+                            <span class="desc">@ItemDetail(item)</span>
+                        }
+                    </div>
+                }
+
+                @if (overflow > 0)
+                {
+                    <div class="ac-row ac-empty">…and @overflow more — keep typing to narrow it down</div>
+                }
+            }
+        </div>
+    }
+</div>
+
+@code {
+    const int MaxVisible = 60;
+
+    [Parameter, EditorRequired] public IReadOnlyList<TItem> Items { get; set; } = Array.Empty<TItem>();
+
+    /// <summary>The item's primary line — also what the input shows once it's picked, and what's matched against.</summary>
+    [Parameter, EditorRequired] public Func<TItem, string> ItemText { get; set; } = _ => "";
+
+    /// <summary>Optional secondary line, shown greyed on the right and included in matching.</summary>
+    [Parameter] public Func<TItem, string>? ItemDetail { get; set; }
+
+    [Parameter] public TItem? Value { get; set; }
+    [Parameter] public EventCallback<TItem> ValueChanged { get; set; }
+    [Parameter] public string? Placeholder { get; set; }
+    [Parameter] public string? EmptyText { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+
+    /// <summary>What the user has typed. Null means "not editing" — show the selected item instead.</summary>
+    string? draft;
+    bool open;
+    int highlight;
+    int overflow;
+
+    string Display => this.draft ?? (this.Value is null ? "" : this.ItemText(this.Value));
+
+    // While filtering, the current selection moves into the placeholder so it isn't lost from view.
+    string? EffectivePlaceholder => this.draft is null || this.Value is null
+        ? this.Placeholder
+        : this.ItemText(this.Value);
+
+    List<TItem> Matches
+    {
+        get
+        {
+            var terms = (this.draft ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+            var all = terms.Length == 0
+                ? this.Items.ToList()
+                : this.Items.Where(item =>
+                {
+                    var haystack = this.ItemDetail is null
+                        ? this.ItemText(item)
+                        : $"{this.ItemText(item)} {this.ItemDetail(item)}";
+                    return terms.All(t => haystack.Contains(t, StringComparison.OrdinalIgnoreCase));
+                }).ToList();
+
+            this.overflow = Math.Max(0, all.Count - MaxVisible);
+            return all.Count > MaxVisible ? all.Take(MaxVisible).ToList() : all;
+        }
+    }
+
+    void OnFocus()
+    {
+        // Start from an empty box so typing filters the whole list rather than appending to the
+        // current selection; the selection stays visible in the placeholder.
+        this.draft = "";
+        this.open = true;
+        this.highlight = 0;
+    }
+
+    void OnInput(ChangeEventArgs e)
+    {
+        this.draft = e.Value?.ToString() ?? "";
+        this.open = true;
+        this.highlight = 0;
+    }
+
+    void OnBlur()
+    {
+        // Drop the half-typed text: an input reading "shin" when "shinyorg/shiny" is selected
+        // would look like an unsaved edit.
+        this.draft = null;
+        this.open = false;
+    }
+
+    async Task OnKeyDown(KeyboardEventArgs e)
+    {
+        var matches = this.Matches;
+        switch (e.Key)
+        {
+            case "ArrowDown":
+                this.open = true;
+                this.highlight = matches.Count == 0 ? 0 : Math.Min(this.highlight + 1, matches.Count - 1);
+                break;
+            case "ArrowUp":
+                this.highlight = Math.Max(this.highlight - 1, 0);
+                break;
+            case "Enter":
+                if (this.open && this.highlight < matches.Count)
+                    await this.SelectAsync(matches[this.highlight]);
+                break;
+            case "Escape":
+                this.draft = null;
+                this.open = false;
+                break;
+        }
+    }
+
+    async Task SelectAsync(TItem item)
+    {
+        this.Value = item;
+        this.draft = null;
+        this.open = false;
+        await this.ValueChanged.InvokeAsync(item);
+    }
+}
