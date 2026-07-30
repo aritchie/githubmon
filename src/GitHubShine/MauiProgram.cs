@@ -136,6 +136,7 @@ public static class MauiProgram
             options.MapTypeToTable<SeenInboxItem>();
             options.MapTypeToTable<DashboardPrefs>();
             options.MapTypeToTable<SyncMapping>();
+            options.MapTypeToTable<AutoSyncPrefs>();
         });
 
         // [Singleton]-attributed services (ConfigStore, SecureTokenVault,
@@ -145,6 +146,10 @@ public static class MauiProgram
 #if !MOBILE
         // System-tray / menu-bar host is desktop-only (Shiny.Maui.Controls.Desktop).
         builder.Services.AddSingletonAsImplementedInterfaces<TrayIconHost>();
+
+        // Background sync, desktop-only for the same reason the Sync nav item is: it shells out
+        // to the git CLI, which mobile doesn't have.
+        builder.Services.AddSingletonAsImplementedInterfaces<AutoSyncRunner>();
 #endif
         builder.Services.AddSingletonAsImplementedInterfaces<PollerInitializer>();
         builder.Services.AddSingletonAsImplementedInterfaces<NotificationAccessInitializer>();

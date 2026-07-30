@@ -5,6 +5,8 @@
 @inject IDatabaseBackup Backup
 @inject IFileDialogs FileDialogs
 @inject INotificationHub Notifications
+@inject ISyncStore SyncStore
+@inject AppPlatformInfo Platform
 @using Shiny
 @using Shiny.Notifications
 
@@ -100,6 +102,66 @@
         </div>
     </div>
 
+    @* Sync shells out to the git CLI, which mobile doesn't have — the Sync page is hidden there
+       too, so its schedule has nothing to configure. *@
+    @if (!Platform.IsMobile)
+    {
+        <div class="card">
+            <h2>Automatic sync</h2>
+            <div class="setting-row">
+                <div class="setting-label">
+                    <div><strong>Sync in the background</strong></div>
+                    <div class="hint">
+                        Runs the syncs configured on the Sync page on a schedule, without opening it.
+                        A run in progress is left alone — the schedule picks up on the next slot.
+                    </div>
+                </div>
+                <label class="switch">
+                    <input type="checkbox" checked="@autoSync.Enabled" @onchange="OnAutoSyncEnabledChanged" />
+                    <span class="track"></span>
+                </label>
+            </div>
+
+            @if (autoSync.Enabled)
+            {
+                <div class="setting-row">
+                    <div class="setting-label">
+                        <div><strong>How often</strong></div>
+                        <div class="hint">
+                            Timed from the last background run, so closing and re-opening the app doesn't
+                            restart the clock. Three hours is the minimum — a sync fetches and pushes real
+                            objects, unlike a dashboard refresh.
+                        </div>
+                    </div>
+                    <select value="@autoSync.IntervalHours" @onchange="OnAutoSyncIntervalChanged">
+                        @foreach (var hours in autoSyncIntervalOptions)
+                        {
+                            <option value="@hours">@HoursLabel(hours)</option>
+                        }
+                    </select>
+                </div>
+
+                <div class="setting-row">
+                    <div class="setting-label">
+                        <div><strong>Sync everything each run</strong></div>
+                        <div class="hint">
+                            Off, each run only touches the repos whose source has been pushed since that
+                            sync last ran, plus any that have never run. On, it runs every configured
+                            sync — slower and more traffic, but it doesn't depend on last-push times
+                            being readable.
+                        </div>
+                    </div>
+                    <label class="switch">
+                        <input type="checkbox" checked="@autoSync.SyncAll" @onchange="OnAutoSyncAllChanged" />
+                        <span class="track"></span>
+                    </label>
+                </div>
+            }
+
+            <p class="hint" style="margin-bottom:0;">@AutoSyncStatus</p>
+        </div>
+    }
+
     <div class="card">
         <h2>Backup &amp; Restore</h2>
         <p class="hint" style="margin-top:0;">
@@ -122,6 +184,27 @@
 
     static readonly int[] presetIntervals = { 15, 30, 60, 120, 300, 600, 900, 1800, 3600 };
     int[] intervalOptions = presetIntervals;
+
+    AutoSyncPrefs autoSync = AutoSyncPrefs.Default;
+    static readonly int[] presetAutoSyncHours = { 3, 4, 6, 8, 12, 24, 48 };
+    int[] autoSyncIntervalOptions = presetAutoSyncHours;
+
+    string AutoSyncStatus
+    {
+        get
+        {
+            if (!autoSync.Enabled)
+                return "Automatic sync is off — the Sync page still runs on demand.";
+
+            var last = autoSync.LastRunUtc is { } when
+                ? $"Last background run {Ago(when)}."
+                : "No background run yet.";
+            var next = autoSync.LastRunUtc is { } prev
+                ? $" Next due {DueLabel(prev + autoSync.Interval)}."
+                : "";
+            return last + next;
+        }
+    }
 
     string AccessLabel => access switch
     {
@@ -207,7 +290,66 @@
         intervalOptions = presetIntervals.Contains(pollSeconds)
             ? presetIntervals
             : presetIntervals.Append(pollSeconds).OrderBy(s => s).ToArray();
+
+        autoSync = await SyncStore.GetAutoSyncAsync();
+        autoSyncIntervalOptions = presetAutoSyncHours.Contains(autoSync.IntervalHours)
+            ? presetAutoSyncHours
+            : presetAutoSyncHours.Append(autoSync.IntervalHours).OrderBy(h => h).ToArray();
     }
+
+    async Task SaveAutoSyncAsync(AutoSyncPrefs updated)
+    {
+        autoSync = updated;
+        await SyncStore.SaveAutoSyncAsync(updated);
+    }
+
+    Task OnAutoSyncEnabledChanged(ChangeEventArgs e)
+        => SaveAutoSyncAsync(autoSync with { Enabled = (bool)e.Value! });
+
+    Task OnAutoSyncAllChanged(ChangeEventArgs e)
+        => SaveAutoSyncAsync(autoSync with { SyncAll = (bool)e.Value! });
+
+    async Task OnAutoSyncIntervalChanged(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var hours))
+            await SaveAutoSyncAsync(autoSync with { IntervalHours = Math.Max(AutoSyncPrefs.MinimumIntervalHours, hours) });
+    }
+
+    static string HoursLabel(int hours) => hours switch
+    {
+        1 => "Every hour",
+        < 24 => $"Every {hours} hours",
+        24 => "Once a day",
+        48 => "Every 2 days",
+        _ => $"Every {hours / 24} days"
+    };
+
+    static string Ago(DateTimeOffset when)
+    {
+        var span = DateTimeOffset.UtcNow - when;
+        return span < TimeSpan.Zero ? "just now" : $"{Humanise(span)} ago";
+    }
+
+    // Rounds up, unlike Ago: "in 2h" for a run that's 2h58m off reads as an hour early.
+    static string DueLabel(DateTimeOffset when)
+    {
+        var span = when - DateTimeOffset.UtcNow;
+        if (span <= TimeSpan.Zero)
+            return "now";
+        if (span < TimeSpan.FromMinutes(1))
+            return "in moments";
+        return span < TimeSpan.FromHours(1)
+            ? $"in {Math.Ceiling(span.TotalMinutes)}m"
+            : $"in {Math.Ceiling(span.TotalHours)}h";
+    }
+
+    static string Humanise(TimeSpan span) => span.TotalMinutes switch
+    {
+        < 1 => "moments",
+        < 60 => $"{(int)span.TotalMinutes}m",
+        < 60 * 24 => $"{(int)span.TotalHours}h",
+        _ => $"{(int)span.TotalDays}d"
+    };
 
     void OnPreferencesChanged(object? sender, EventArgs e)
         => _ = InvokeAsync(async () =>

@@ -13,4 +13,5 @@ namespace GitHubShine;
 [JsonSerializable(typeof(SeenInboxItem))]
 [JsonSerializable(typeof(DashboardPrefs))]
 [JsonSerializable(typeof(SyncMapping))]
+[JsonSerializable(typeof(AutoSyncPrefs))]
 internal sealed partial class GitHubShineJsonContext : JsonSerializerContext;

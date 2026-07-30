@@ -10,6 +10,13 @@ public interface ISyncStore
     /// <summary>Raised when mappings are added, edited or removed — consumers re-read <see cref="Mappings"/>.</summary>
     event EventHandler? Changed;
 
+    /// <summary>
+    /// Raised when the auto-sync preferences are saved. Kept apart from <see cref="Changed"/> so a
+    /// settings tweak doesn't look like a mapping edit — the background runner listens to this one
+    /// to re-time itself instead of waiting out the interval it was already sleeping off.
+    /// </summary>
+    event EventHandler? AutoSyncChanged;
+
     Task ReloadAsync(CancellationToken ct = default);
     Task UpsertAsync(SyncMapping mapping, CancellationToken ct = default);
     Task RemoveAsync(string id, CancellationToken ct = default);
@@ -30,6 +37,19 @@ public interface ISyncStore
     /// leaves no usable sync behind. Returns what was removed.
     /// </summary>
     Task<IReadOnlyList<SyncMapping>> PruneForRemovedAccountAsync(string accountId, CancellationToken ct = default);
+
+    /// <summary>The saved auto-sync preferences, or the defaults when nothing has been saved yet.</summary>
+    Task<AutoSyncPrefs> GetAutoSyncAsync(CancellationToken ct = default);
+
+    /// <summary>Saves the auto-sync preferences and raises <see cref="AutoSyncChanged"/>.</summary>
+    Task SaveAutoSyncAsync(AutoSyncPrefs prefs, CancellationToken ct = default);
+
+    /// <summary>
+    /// Stamps when the background runner last completed a pass. Deliberately does NOT raise
+    /// <see cref="AutoSyncChanged"/> — the runner writes this itself and waking it on its own
+    /// bookkeeping would just churn.
+    /// </summary>
+    Task MarkAutoSyncRunAsync(DateTimeOffset whenUtc, CancellationToken ct = default);
 }
 
 /// <summary>
@@ -43,6 +63,7 @@ public sealed class SyncStore(IDocumentStore store) : ISyncStore
 
     public IReadOnlyList<SyncMapping> Mappings => this.mappings;
     public event EventHandler? Changed;
+    public event EventHandler? AutoSyncChanged;
 
     public async Task ReloadAsync(CancellationToken ct = default)
     {
@@ -82,6 +103,25 @@ public sealed class SyncStore(IDocumentStore store) : ISyncStore
 
     public Task<IReadOnlyList<SyncMapping>> PruneForRemovedAccountAsync(string accountId, CancellationToken ct = default)
         => this.RemoveWhereAsync(m => m.SourceAccountId == accountId || m.TargetAccountId == accountId, ct);
+
+    public async Task<AutoSyncPrefs> GetAutoSyncAsync(CancellationToken ct = default)
+        => await store.Get<AutoSyncPrefs>(AutoSyncPrefs.DefaultId, cancellationToken: ct).ConfigureAwait(false)
+            ?? AutoSyncPrefs.Default;
+
+    public async Task SaveAutoSyncAsync(AutoSyncPrefs prefs, CancellationToken ct = default)
+    {
+        await store.Upsert(prefs with { Id = AutoSyncPrefs.DefaultId }, cancellationToken: ct).ConfigureAwait(false);
+        this.AutoSyncChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    public async Task MarkAutoSyncRunAsync(DateTimeOffset whenUtc, CancellationToken ct = default)
+    {
+        // Re-read first: the user may have changed the settings during the pass that just finished.
+        var prefs = await this.GetAutoSyncAsync(ct).ConfigureAwait(false);
+        await store
+            .Upsert(prefs with { LastRunUtc = whenUtc }, cancellationToken: ct)
+            .ConfigureAwait(false);
+    }
 
     async Task<IReadOnlyList<SyncMapping>> RemoveWhereAsync(Func<SyncMapping, bool> predicate, CancellationToken ct)
     {

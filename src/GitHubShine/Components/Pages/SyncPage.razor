@@ -9,6 +9,7 @@
 @inject IBrowser Browser
 @inject SnapshotCache Snapshots
 @inject IGitProviderFactory Factory
+@inject SyncGate Gate
 
 <div class="page narrow">
     <div class="page-header">
@@ -26,6 +27,17 @@
         <div class="card sync-warning">
             <strong>git isn't available</strong>
             <div class="meta">@gitMessage</div>
+        </div>
+    }
+
+    @if (AutoSyncRunning)
+    {
+        <div class="card sync-warning">
+            <strong>Auto-sync is running</strong>
+            <div class="meta">
+                A scheduled background run has these syncs. Its results land in this list as it goes —
+                start your own run once it's finished.
+            </div>
         </div>
     }
 
@@ -88,6 +100,7 @@
                     {
                         <text> · @UpToDateCount up to date</text>
                     }
+                    <text> · </text><span title="Change this in Settings → Automatic sync">@AutoSyncSummary</span>
                 </span>
                 <span class="spacer" style="flex:1;"></span>
                 <select value="@filter" @onchange="OnFilterChanged" disabled="@isBusy"
@@ -117,13 +130,13 @@
                 }
                 else
                 {
-                    <button class="btn" @onclick="RunBehindAsync" disabled="@(isChecking || BehindCount == 0)"
+                    <button class="btn" @onclick="RunBehindAsync" disabled="@(isChecking || AutoSyncRunning || BehindCount == 0)"
                             title="@(BehindCount == 0
                                 ? "Nothing is known to be behind — run Check for changes first"
                                 : "Runs only the syncs whose source was pushed after their last run")">
                         Sync behind (@BehindCount)
                     </button>
-                    <button class="btn primary" @onclick="RunVisibleAsync" disabled="@(isChecking || RunnableVisible.Count == 0)">
+                    <button class="btn primary" @onclick="RunVisibleAsync" disabled="@(isChecking || AutoSyncRunning || RunnableVisible.Count == 0)">
                         @(filter == RowFilter.All ? "Run all" : $"Run {RunnableVisible.Count} shown")
                     </button>
                 }
@@ -223,11 +236,11 @@
                     {
                         <Pill Text="Synced" Type="PillType.Success" />
                     }
-                    else if (row.Freshness == Freshness.Behind)
+                    else if (row.Freshness == SyncFreshness.Behind)
                     {
                         <span title="@row.FreshnessDetail"><Pill Text="Behind" Type="PillType.Warning" /></span>
                     }
-                    else if (row.Freshness == Freshness.UpToDate)
+                    else if (row.Freshness == SyncFreshness.UpToDate)
                     {
                         <span title="@row.FreshnessDetail"><Pill Text="Up to date" Type="PillType.Success" /></span>
                     }
@@ -243,7 +256,7 @@
                 <div class="sync-actions">
                     <div class="sync-actions-row">
                         <button class="btn primary" @onclick="() => RunOneAsync(row)"
-                                disabled="@(isBusy || row.Blocked)"
+                                disabled="@(isBusy || AutoSyncRunning || row.Blocked)"
                                 title="@(row.Blocked ? row.Issue : "Push whatever the target is missing")">Sync now</button>
                         <button class="btn @(row.ShowDetails ? "active" : "")" @onclick="() => row.ShowDetails = !row.ShowDetails"
                                 title="@LastRunText(row)">
@@ -279,19 +292,6 @@
 @code {
     enum RunStatus { Idle, Running, Done, Failed }
 
-    /// <summary>How the target compares with its source, as far as we can tell without a fetch.</summary>
-    enum Freshness
-    {
-        /// <summary>No last-push time for the source yet — nothing to compare against.</summary>
-        Unknown,
-        /// <summary>This sync has never run.</summary>
-        NeverSynced,
-        /// <summary>The source was pushed after the last successful run.</summary>
-        Behind,
-        /// <summary>The last run is newer than the source's last push.</summary>
-        UpToDate
-    }
-
     /// <summary>Which rows the list shows. Counts in the picker come from the same rules.</summary>
     enum RowFilter { All, Behind, NeverSynced, UpToDate, NeedsAttention }
 
@@ -323,7 +323,7 @@
         /// <summary>Set when the timestamp came from this page's own check rather than the cache.</summary>
         public bool Checked { get; set; }
 
-        public Freshness Freshness { get; set; }
+        public SyncFreshness Freshness { get; set; }
         public string? FreshnessDetail { get; set; }
         public bool ShowDetails { get; set; }
 
@@ -344,15 +344,31 @@
 
     RowFilter filter = RowFilter.All;
 
+    AutoSyncPrefs autoSync = AutoSyncPrefs.Default;
+
+    /// <summary>True while the scheduled background run owns the gate — this page can't run then.</summary>
+    bool AutoSyncRunning => Gate.Holder == SyncRunKind.Automatic;
+
+    string AutoSyncSummary
+    {
+        get
+        {
+            if (!autoSync.Enabled)
+                return "auto-sync off";
+            var scope = autoSync.SyncAll ? "everything" : "behind only";
+            return $"auto-sync every {autoSync.IntervalHours}h ({scope})";
+        }
+    }
+
     List<SyncRow> BlockedRows => rows.Where(r => r.Blocked).ToList();
     List<SyncRow> SupersededRows => rows.Where(r => r.Blocked && r.SupersededBy is not null).ToList();
 
     /// <summary>Rows whose source was pushed after their last run — what "Sync behind" runs.</summary>
-    List<SyncRow> BehindRows => rows.Where(r => !r.Blocked && r.Freshness == Freshness.Behind).ToList();
+    List<SyncRow> BehindRows => rows.Where(r => !r.Blocked && r.Freshness == SyncFreshness.Behind).ToList();
 
     int BehindCount => BehindRows.Count;
-    int NeverSyncedCount => rows.Count(r => !r.Blocked && r.Freshness == Freshness.NeverSynced);
-    int UpToDateCount => rows.Count(r => !r.Blocked && r.Freshness == Freshness.UpToDate);
+    int NeverSyncedCount => rows.Count(r => !r.Blocked && r.Freshness == SyncFreshness.NeverSynced);
+    int UpToDateCount => rows.Count(r => !r.Blocked && r.Freshness == SyncFreshness.UpToDate);
 
     List<SyncRow> VisibleRows => rows.Where(Matches).ToList();
 
@@ -368,9 +384,9 @@
 
         return filter switch
         {
-            RowFilter.Behind => !row.Blocked && row.Freshness == Freshness.Behind,
-            RowFilter.NeverSynced => !row.Blocked && row.Freshness == Freshness.NeverSynced,
-            RowFilter.UpToDate => !row.Blocked && row.Freshness == Freshness.UpToDate,
+            RowFilter.Behind => !row.Blocked && row.Freshness == SyncFreshness.Behind,
+            RowFilter.NeverSynced => !row.Blocked && row.Freshness == SyncFreshness.NeverSynced,
+            RowFilter.UpToDate => !row.Blocked && row.Freshness == SyncFreshness.UpToDate,
             RowFilter.NeedsAttention => row.Blocked,
             _ => true
         };
@@ -391,8 +407,11 @@
     protected override async Task OnInitializedAsync()
     {
         SyncStore.Changed += OnStoreChanged;
+        SyncStore.AutoSyncChanged += OnAutoSyncChanged;
+        Gate.BusyChanged += OnGateChanged;
         await Config.ReloadAsync();
         await SyncStore.ReloadAsync();
+        autoSync = await SyncStore.GetAutoSyncAsync();
         Rebuild();
 
         try
@@ -447,17 +466,12 @@
         var source = Config.Accounts.FirstOrDefault(a => a.Id == mapping.SourceAccountId);
         var target = Config.Accounts.FirstOrDefault(a => a.Id == mapping.TargetAccountId);
 
-        row.SourceUrl = source is null ? null : $"{source.WebBaseUrl}/{mapping.Source.FullName}";
-        row.TargetUrl = target is null ? null : $"{target.WebBaseUrl}/{mapping.TargetFullName}";
+        row.SourceUrl = source is null ? null : SyncStatus.RepoUrl(source, mapping.Source);
+        row.TargetUrl = target is null ? null : SyncStatus.RepoUrl(target, mapping.TargetRepo);
 
-        if (source is null)
-            row.Issue = "The source account for this sync no longer exists.";
-        else if (!Monitors(source, mapping.Source))
-            row.Issue = $"{mapping.Source.FullName} isn't monitored on {source.Label} any more.";
-        else if (target is null)
-            row.Issue = "The destination account for this sync no longer exists.";
-        else if (string.Equals(row.SourceUrl, row.TargetUrl, StringComparison.OrdinalIgnoreCase))
-            row.Issue = "The source and destination are the same repo — this sync can't do anything.";
+        // Shared with the background runner, so a row the page calls runnable is exactly one
+        // AutoSyncRunner would pick up.
+        row.Issue = SyncStatus.BlockingIssue(mapping, Config.Accounts);
 
         if (row.Issue is not null)
         {
@@ -489,36 +503,22 @@
     }
 
     /// <summary>
-    /// Compares the source's last push with this mapping's last run. It's a heuristic, not a ref
-    /// comparison: a push to a branch the mapping doesn't carry still reads as "behind", so it can
-    /// say "go and sync" when nothing would move. It never claims up-to-date when there are
-    /// commits to collect, which is the direction that matters for a backup.
+    /// Classifies the row with <see cref="SyncStatus.Evaluate"/> — the same rule the background
+    /// runner uses to pick what to sync — and writes the wording that goes with the verdict.
     /// </summary>
     static void EvaluateFreshness(SyncRow row)
     {
         var lastRun = row.Mapping.LastSyncedUtc;
         var pushed = row.SourcePushedAt;
 
-        if (lastRun is null)
+        row.Freshness = SyncStatus.Evaluate(lastRun, pushed);
+        row.FreshnessDetail = row.Freshness switch
         {
-            row.Freshness = Freshness.NeverSynced;
-            row.FreshnessDetail = "This sync has never run.";
-        }
-        else if (pushed is null)
-        {
-            row.Freshness = Freshness.Unknown;
-            row.FreshnessDetail = "No last-push time for the source yet — use Check for changes.";
-        }
-        else if (pushed > lastRun)
-        {
-            row.Freshness = Freshness.Behind;
-            row.FreshnessDetail = $"Pushed {Ago(pushed.Value)}, {Humanise(pushed.Value - lastRun.Value)} after the last run.";
-        }
-        else
-        {
-            row.Freshness = Freshness.UpToDate;
-            row.FreshnessDetail = $"Last run {Ago(lastRun.Value)}; no push to the source since.";
-        }
+            SyncFreshness.NeverSynced => "This sync has never run.",
+            SyncFreshness.Unknown => "No last-push time for the source yet — use Check for changes.",
+            SyncFreshness.Behind => $"Pushed {Ago(pushed!.Value)}, {Humanise(pushed.Value - lastRun!.Value)} after the last run.",
+            _ => $"Last run {Ago(lastRun!.Value)}; no push to the source since."
+        };
     }
 
     static string LastSyncedLabel(SyncRow row)
@@ -545,9 +545,7 @@
     };
 
     static bool Monitors(MonitoredAccount account, MonitoredRepo repo)
-        => account.Repos.Any(r =>
-            string.Equals(r.Owner, repo.Owner, StringComparison.OrdinalIgnoreCase) &&
-            string.Equals(r.Name, repo.Name, StringComparison.OrdinalIgnoreCase));
+        => SyncStatus.Monitors(account, repo);
 
     static bool SameDestination(SyncMapping a, SyncMapping b)
         => a.TargetAccountId == b.TargetAccountId &&
@@ -559,6 +557,18 @@
             Rebuild();
             StateHasChanged();
         });
+
+    void OnAutoSyncChanged(object? sender, EventArgs e)
+        => _ = InvokeAsync(async () =>
+        {
+            autoSync = await SyncStore.GetAutoSyncAsync();
+            StateHasChanged();
+        });
+
+    // The background runner takes and releases the gate off the UI thread — repaint so the banner
+    // and the run buttons follow it.
+    void OnGateChanged(object? sender, EventArgs e)
+        => _ = InvokeAsync(StateHasChanged);
 
     string AccountLabel(string accountId)
         => Config.Accounts.FirstOrDefault(a => a.Id == accountId)?.Label ?? "(deleted account)";
@@ -618,6 +628,16 @@
     {
         if (isBusy || targets.Count == 0)
             return;
+
+        // One run at a time process-wide: the scheduled background run may already have these
+        // mappings, and two passes interleaving over the same cache repos helps nobody.
+        using var lease = Gate.TryAcquire(SyncRunKind.Manual);
+        if (lease is null)
+        {
+            await Toast.InfoAsync("Auto-sync is running right now — try again when it's finished");
+            StateHasChanged();
+            return;
+        }
 
         pendingDeleteId = null;
         cts = new CancellationTokenSource();
@@ -815,6 +835,8 @@
     public void Dispose()
     {
         SyncStore.Changed -= OnStoreChanged;
+        SyncStore.AutoSyncChanged -= OnAutoSyncChanged;
+        Gate.BusyChanged -= OnGateChanged;
         cts?.Cancel();
         cts?.Dispose();
     }
