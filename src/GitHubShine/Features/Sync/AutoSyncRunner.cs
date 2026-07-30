@@ -14,7 +14,17 @@ namespace GitHubShine.Sync;
 /// task, woken early when the settings change. Desktop-only — sync shells out to the git CLI,
 /// which mobile doesn't have — so it's registered under <c>!MOBILE</c> in MauiProgram.
 /// </summary>
-public sealed class AutoSyncRunner : IMauiInitializeService, IDisposable
+public sealed class AutoSyncRunner(
+    IConfigStore config,
+    ISyncStore syncStore,
+    IRepoSyncEngine engine,
+    IGitCli git,
+    IGitProviderFactory factory,
+    SnapshotCache snapshots,
+    SyncGate gate,
+    INotificationHub notifications,
+    INotificationPrefsStore notifyPrefs,
+    ILogger<AutoSyncRunner> logger) : IMauiInitializeService, IDisposable
 {
     /// <summary>Long enough after launch for the poller to have filled the snapshot cache with
     /// the push times the "behind" check reads, so the first pass rarely needs its own requests.</summary>
@@ -29,43 +39,11 @@ public sealed class AutoSyncRunner : IMauiInitializeService, IDisposable
     /// <summary>Fallback re-check while auto-sync is switched off; the wake signal normally beats it.</summary>
     static readonly TimeSpan DisabledIdle = TimeSpan.FromHours(1);
 
-    readonly IConfigStore config;
-    readonly ISyncStore syncStore;
-    readonly IRepoSyncEngine engine;
-    readonly IGitCli git;
-    readonly IGitProviderFactory factory;
-    readonly SnapshotCache snapshots;
-    readonly SyncGate gate;
-    readonly INotificationHub notifications;
-    readonly ILogger<AutoSyncRunner> logger;
-
     CancellationTokenSource? cts;
     Task? loop;
     DateTimeOffset? retryAfterUtc;
     volatile TaskCompletionSource wakeSignal = NewSignal();
     static int notificationIdSeed = 2000;
-
-    public AutoSyncRunner(
-        IConfigStore config,
-        ISyncStore syncStore,
-        IRepoSyncEngine engine,
-        IGitCli git,
-        IGitProviderFactory factory,
-        SnapshotCache snapshots,
-        SyncGate gate,
-        INotificationHub notifications,
-        ILogger<AutoSyncRunner> logger)
-    {
-        this.config = config;
-        this.syncStore = syncStore;
-        this.engine = engine;
-        this.git = git;
-        this.factory = factory;
-        this.snapshots = snapshots;
-        this.gate = gate;
-        this.notifications = notifications;
-        this.logger = logger;
-    }
 
     static TaskCompletionSource NewSignal()
         => new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -83,7 +61,7 @@ public sealed class AutoSyncRunner : IMauiInitializeService, IDisposable
 
     async Task RunAsync(CancellationToken ct)
     {
-        this.syncStore.AutoSyncChanged += this.OnAutoSyncChanged;
+        syncStore.AutoSyncChanged += this.OnAutoSyncChanged;
 
         try { await Task.Delay(StartupSettle, ct).ConfigureAwait(false); }
         catch (OperationCanceledException) { return; }
@@ -98,12 +76,12 @@ public sealed class AutoSyncRunner : IMauiInitializeService, IDisposable
             AutoSyncPrefs prefs;
             try
             {
-                prefs = await this.syncStore.GetAutoSyncAsync(ct).ConfigureAwait(false);
+                prefs = await syncStore.GetAutoSyncAsync(ct).ConfigureAwait(false);
             }
             catch (OperationCanceledException) { break; }
             catch (Exception ex)
             {
-                this.logger.LogWarning(ex, "[AutoSync] couldn't read the auto-sync settings");
+                logger.LogWarning(ex, "[AutoSync] couldn't read the auto-sync settings");
                 prefs = AutoSyncPrefs.Default with { Enabled = false };
             }
 
@@ -123,12 +101,12 @@ public sealed class AutoSyncRunner : IMauiInitializeService, IDisposable
             catch (Exception ex)
             {
                 // Never let one bad pass end the loop — back off and try again later.
-                this.logger.LogError(ex, "[AutoSync] pass failed");
+                logger.LogError(ex, "[AutoSync] pass failed");
                 this.retryAfterUtc = DateTimeOffset.UtcNow + LongRetry;
             }
         }
 
-        this.syncStore.AutoSyncChanged -= this.OnAutoSyncChanged;
+        syncStore.AutoSyncChanged -= this.OnAutoSyncChanged;
     }
 
     /// <summary>How long until the next pass is due — zero when it's due now.</summary>
@@ -148,27 +126,27 @@ public sealed class AutoSyncRunner : IMauiInitializeService, IDisposable
     {
         try
         {
-            await this.git.EnsureAvailableAsync(ct).ConfigureAwait(false);
+            await git.EnsureAvailableAsync(ct).ConfigureAwait(false);
         }
         catch (GitUnavailableException ex)
         {
             // Installing git isn't going to happen in the next few minutes — check back in an hour.
-            this.logger.LogWarning("[AutoSync] skipped — {Message}", ex.Message);
+            logger.LogWarning("[AutoSync] skipped — {Message}", ex.Message);
             this.retryAfterUtc = DateTimeOffset.UtcNow + LongRetry;
             return;
         }
 
-        if (this.config.Accounts.Count == 0)
-            await this.config.ReloadAsync(ct).ConfigureAwait(false);
-        await this.syncStore.ReloadAsync(ct).ConfigureAwait(false);
+        if (config.Accounts.Count == 0)
+            await config.ReloadAsync(ct).ConfigureAwait(false);
+        await syncStore.ReloadAsync(ct).ConfigureAwait(false);
 
-        var runnable = this.syncStore.Mappings
-            .Where(m => SyncStatus.BlockingIssue(m, this.config.Accounts) is null)
+        var runnable = syncStore.Mappings
+            .Where(m => SyncStatus.BlockingIssue(m, config.Accounts) is null)
             .ToList();
 
         if (runnable.Count == 0)
         {
-            this.logger.LogDebug("[AutoSync] nothing runnable is configured");
+            logger.LogDebug("[AutoSync] nothing runnable is configured");
             await this.CompletePassAsync(ct).ConfigureAwait(false);
             return;
         }
@@ -179,22 +157,22 @@ public sealed class AutoSyncRunner : IMauiInitializeService, IDisposable
 
         if (targets.Count == 0)
         {
-            this.logger.LogDebug("[AutoSync] all {Count} sync(s) are up to date", runnable.Count);
+            logger.LogDebug("[AutoSync] all {Count} sync(s) are up to date", runnable.Count);
             await this.CompletePassAsync(ct).ConfigureAwait(false);
             return;
         }
 
         // The user's own run owns the gate while it lasts; come back shortly rather than
         // interleaving two passes over the same mappings.
-        using var lease = this.gate.TryAcquire(SyncRunKind.Automatic);
+        using var lease = gate.TryAcquire(SyncRunKind.Automatic);
         if (lease is null)
         {
-            this.logger.LogDebug("[AutoSync] a sync is already running — retrying in {Minutes}m", ShortRetry.TotalMinutes);
+            logger.LogDebug("[AutoSync] a sync is already running — retrying in {Minutes}m", ShortRetry.TotalMinutes);
             this.retryAfterUtc = DateTimeOffset.UtcNow + ShortRetry;
             return;
         }
 
-        this.logger.LogInformation(
+        logger.LogInformation(
             "[AutoSync] starting: {Count} of {Total} sync(s), mode={Mode}",
             targets.Count, runnable.Count, prefs.SyncAll ? "all" : "behind");
 
@@ -206,7 +184,7 @@ public sealed class AutoSyncRunner : IMauiInitializeService, IDisposable
             ct.ThrowIfCancellationRequested();
             try
             {
-                await this.engine.SyncAsync(mapping, progress: null, ct).ConfigureAwait(false);
+                await engine.SyncAsync(mapping, progress: null, ct).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -215,12 +193,12 @@ public sealed class AutoSyncRunner : IMauiInitializeService, IDisposable
             catch (Exception ex)
             {
                 // The engine has already recorded the failure on the mapping, so the page shows it.
-                this.logger.LogWarning(ex, "[AutoSync] {Source} -> {Target} failed", mapping.Source.FullName, mapping.TargetFullName);
+                logger.LogWarning(ex, "[AutoSync] {Source} -> {Target} failed", mapping.Source.FullName, mapping.TargetFullName);
                 failures.Add(mapping.Source.FullName);
             }
         }
 
-        this.logger.LogInformation("[AutoSync] finished: {Ok} synced, {Failed} failed", targets.Count - failures.Count, failures.Count);
+        logger.LogInformation("[AutoSync] finished: {Ok} synced, {Failed} failed", targets.Count - failures.Count, failures.Count);
         await this.NotifyFailuresAsync(failures, targets.Count).ConfigureAwait(false);
         await this.CompletePassAsync(ct).ConfigureAwait(false);
     }
@@ -249,7 +227,7 @@ public sealed class AutoSyncRunner : IMauiInitializeService, IDisposable
             var key = $"{mapping.SourceAccountId}|{mapping.Source.FullName}";
             if (!pushedAt.TryGetValue(key, out var pushed))
             {
-                pushed = this.snapshots.TryGet(mapping.SourceAccountId, mapping.Source)?.PushedAt
+                pushed = snapshots.TryGet(mapping.SourceAccountId, mapping.Source)?.PushedAt
                     ?? await this.ReadPushedAtAsync(mapping, ct).ConfigureAwait(false);
                 pushedAt[key] = pushed;
             }
@@ -268,11 +246,11 @@ public sealed class AutoSyncRunner : IMauiInitializeService, IDisposable
     {
         try
         {
-            var account = this.config.Accounts.FirstOrDefault(a => a.Id == mapping.SourceAccountId);
+            var account = config.Accounts.FirstOrDefault(a => a.Id == mapping.SourceAccountId);
             if (account is null)
                 return null;
 
-            var provider = await this.factory.CreateAsync(account, ct).ConfigureAwait(false);
+            var provider = await factory.CreateAsync(account, ct).ConfigureAwait(false);
             if (provider is null)
                 return null;
 
@@ -286,7 +264,7 @@ public sealed class AutoSyncRunner : IMauiInitializeService, IDisposable
         catch (Exception ex)
         {
             // One unreachable repo shouldn't abandon the pass — it just stays unknown.
-            this.logger.LogDebug(ex, "[AutoSync] couldn't read {Repo}", mapping.Source.FullName);
+            logger.LogDebug(ex, "[AutoSync] couldn't read {Repo}", mapping.Source.FullName);
             return null;
         }
     }
@@ -296,13 +274,13 @@ public sealed class AutoSyncRunner : IMauiInitializeService, IDisposable
         this.retryAfterUtc = null;
         try
         {
-            await this.syncStore.MarkAutoSyncRunAsync(DateTimeOffset.UtcNow, ct).ConfigureAwait(false);
+            await syncStore.MarkAutoSyncRunAsync(DateTimeOffset.UtcNow, ct).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
             // Bookkeeping only — but without it the loop would think a pass is still due, so back
             // off explicitly rather than re-running immediately.
-            this.logger.LogWarning(ex, "[AutoSync] couldn't record the run time");
+            logger.LogWarning(ex, "[AutoSync] couldn't record the run time");
             this.retryAfterUtc = DateTimeOffset.UtcNow + LongRetry;
         }
     }
@@ -318,14 +296,16 @@ public sealed class AutoSyncRunner : IMauiInitializeService, IDisposable
 
         try
         {
-            if (await this.config.GetNotificationsMutedAsync().ConfigureAwait(false))
+            // Auto-sync failures have no category of their own — they're the one alert that
+            // isn't about GitHub activity — so they honour the global mute and nothing else.
+            if ((await notifyPrefs.GetAsync().ConfigureAwait(false)).Muted)
                 return;
 
             var detail = failures.Count <= 3
                 ? string.Join(", ", failures)
                 : $"{string.Join(", ", failures.Take(3))} and {failures.Count - 3} more";
 
-            await this.notifications.SendAsync(new Notification
+            await notifications.SendAsync(new Notification
             {
                 Id = Interlocked.Increment(ref notificationIdSeed),
                 Title = $"Auto-sync: {failures.Count} of {total} failed",
@@ -334,13 +314,13 @@ public sealed class AutoSyncRunner : IMauiInitializeService, IDisposable
         }
         catch (Exception ex)
         {
-            this.logger.LogDebug(ex, "[AutoSync] couldn't post the failure notification");
+            logger.LogDebug(ex, "[AutoSync] couldn't post the failure notification");
         }
     }
 
     public void Dispose()
     {
-        this.syncStore.AutoSyncChanged -= this.OnAutoSyncChanged;
+        syncStore.AutoSyncChanged -= this.OnAutoSyncChanged;
         this.cts?.Cancel();
         this.cts?.Dispose();
     }

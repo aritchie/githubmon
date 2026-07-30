@@ -47,11 +47,10 @@ public interface INotificationHub
 public sealed class NotificationHub(IServiceProvider services, ILogger<NotificationHub> logger) : INotificationHub
 {
     readonly SemaphoreSlim gate = new(1, 1);
-    AccessState? cached;
     INotificationManager? manager;
     bool resolved;
 
-    public AccessState? Current => this.cached;
+    public AccessState? Current { get; private set; }
 
     public bool IsSupported => this.Resolve() is not null;
 
@@ -84,7 +83,7 @@ public sealed class NotificationHub(IServiceProvider services, ILogger<Notificat
         try
         {
             var state = await mgr.GetCurrentAccess(AccessRequestFlags.Notification).ConfigureAwait(false);
-            this.cached = state;
+            this.Current = state;
             return state;
         }
         catch (Exception ex)
@@ -96,13 +95,13 @@ public sealed class NotificationHub(IServiceProvider services, ILogger<Notificat
 
     public async Task<AccessState> EnsureAsync(CancellationToken ct = default)
     {
-        if (this.cached == AccessState.Available)
+        if (this.Current == AccessState.Available)
             return AccessState.Available;
 
         await this.gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            return this.cached is { } already ? already : await this.RequestCoreAsync().ConfigureAwait(false);
+            return this.Current is { } already ? already : await this.RequestCoreAsync().ConfigureAwait(false);
         }
         finally
         {
@@ -115,7 +114,7 @@ public sealed class NotificationHub(IServiceProvider services, ILogger<Notificat
         await this.gate.WaitAsync().ConfigureAwait(false);
         try
         {
-            this.cached = null;
+            this.Current = null;
             return await this.RequestCoreAsync().ConfigureAwait(false);
         }
         finally
@@ -128,14 +127,14 @@ public sealed class NotificationHub(IServiceProvider services, ILogger<Notificat
     {
         if (this.Resolve() is not { } mgr)
         {
-            this.cached = AccessState.NotSupported;
+            this.Current = AccessState.NotSupported;
             return AccessState.NotSupported;
         }
 
         try
         {
             var state = await mgr.RequestAccess(AccessRequestFlags.Notification).ConfigureAwait(false);
-            this.cached = state;
+            this.Current = state;
 
             if (state == AccessState.Available)
                 logger.LogInformation("[Notifications] permission granted");
@@ -147,7 +146,7 @@ public sealed class NotificationHub(IServiceProvider services, ILogger<Notificat
         catch (Exception ex)
         {
             logger.LogWarning(ex, "[Notifications] requesting permission failed");
-            this.cached = AccessState.Unknown;
+            this.Current = AccessState.Unknown;
             return AccessState.Unknown;
         }
     }

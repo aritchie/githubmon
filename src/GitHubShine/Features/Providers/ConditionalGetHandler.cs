@@ -18,7 +18,8 @@ namespace GitHubShine.Providers;
 /// One instance is created per provider (i.e. per account), so its ETag cache is naturally scoped
 /// to a single account/host and never crosses credentials.
 /// </summary>
-sealed class ConditionalGetHandler : DelegatingHandler
+sealed class ConditionalGetHandler(HttpMessageHandler inner, RateLimitMonitor monitor, ILogger logger)
+    : DelegatingHandler(inner)
 {
     // Don't buffer large payloads (repo zip archives, etc.) into the in-memory ETag cache.
     const long MaxCachedBytes = 5 * 1024 * 1024;
@@ -26,14 +27,6 @@ sealed class ConditionalGetHandler : DelegatingHandler
     readonly record struct Entry(string ETag, byte[] Body, string? MediaType);
 
     readonly ConcurrentDictionary<string, Entry> cache = new();
-    readonly RateLimitMonitor monitor;
-    readonly ILogger logger;
-
-    public ConditionalGetHandler(HttpMessageHandler inner, RateLimitMonitor monitor, ILogger logger) : base(inner)
-    {
-        this.monitor = monitor;
-        this.logger = logger;
-    }
 
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
     {
@@ -68,7 +61,7 @@ sealed class ConditionalGetHandler : DelegatingHandler
                 replay.Content.Headers.ContentType = MediaTypeHeaderValue.Parse(entry.MediaType);
 
             response.Dispose();
-            this.logger.LogDebug("[ETag] 304 FREE {Url}", key);
+            logger.LogDebug("[ETag] 304 FREE {Url}", key);
             return replay;
         }
 
@@ -88,7 +81,7 @@ sealed class ConditionalGetHandler : DelegatingHandler
             if (body.LongLength <= MaxCachedBytes)
             {
                 this.cache[key] = new Entry(etag.ToString(), body, mediaType);
-                this.logger.LogDebug("[ETag] 200 store {Url}", key);
+                logger.LogDebug("[ETag] 200 store {Url}", key);
             }
         }
 
@@ -105,8 +98,8 @@ sealed class ConditionalGetHandler : DelegatingHandler
             ? DateTimeOffset.FromUnixTimeSeconds(r)
             : null;
 
-        this.monitor.Report(remaining, limit, reset);
-        this.logger.LogDebug("[ETag] rate-limit remaining={Remaining}/{Limit}", remaining, limit);
+        monitor.Report(remaining, limit, reset);
+        logger.LogDebug("[ETag] rate-limit remaining={Remaining}/{Limit}", remaining, limit);
     }
 
     // GitHub/Gitea API bodies are application/json (or application/vnd.github+json); archives are

@@ -5,6 +5,7 @@
 @inject IDatabaseBackup Backup
 @inject IFileDialogs FileDialogs
 @inject INotificationHub Notifications
+@inject INotificationPrefsStore NotifyPrefs
 @inject ISyncStore SyncStore
 @inject AppPlatformInfo Platform
 @using Shiny
@@ -14,7 +15,7 @@
     <div class="page-header">
         <div>
             <h1>Settings</h1>
-            <span class="subtitle">Notifications, repository ordering, refresh interval, and backups.</span>
+            <span class="subtitle">Notifications, alert categories, repository ordering, refresh interval, and backups.</span>
         </div>
     </div>
 
@@ -52,8 +53,11 @@
 
         <div class="setting-row">
             <div class="setting-label">
-                <div><strong>Mute notifications</strong></div>
-                <div class="hint">Silence new-issue, new-PR, and failed-build alerts without removing any accounts.</div>
+                <div><strong>Mute everything</strong></div>
+                <div class="hint">
+                    Silences every category below without turning any of them off — flip it back and
+                    your per-category choices are exactly as you left them.
+                </div>
             </div>
             <label class="switch">
                 <input type="checkbox" checked="@muted" @onchange="OnMuteChanged" />
@@ -68,6 +72,37 @@
             </div>
             <button class="btn" @onclick="SendTestAsync" disabled="@isBusyNotify">Send test</button>
         </div>
+    </div>
+
+    <div class="card">
+        <h2>Alert categories</h2>
+        <p class="hint" style="margin-top:0;">
+            @if (muted)
+            {
+                <text>Everything is muted right now — these switches take effect once you unmute.</text>
+            }
+            else
+            {
+                <text>Each kind of alert can be switched off on its own. Changes apply from the next refresh cycle.</text>
+            }
+        </p>
+        @foreach (var category in NotificationCategoryInfo.All)
+        {
+            var current = category;
+            <div class="setting-row">
+                <div class="setting-label">
+                    <div><strong>@NotificationCategoryInfo.Label(current)</strong></div>
+                    <div class="hint">@NotificationCategoryInfo.Description(current)</div>
+                </div>
+                <label class="switch">
+                    <input type="checkbox"
+                           checked="@notify.IsCategoryOn(current)"
+                           disabled="@muted"
+                           @onchange="e => OnCategoryChangedAsync(current, e)" />
+                    <span class="track"></span>
+                </label>
+            </div>
+        }
     </div>
 
     <div class="card">
@@ -91,7 +126,7 @@
         <div class="setting-row">
             <div class="setting-label">
                 <div><strong>Refresh interval</strong></div>
-                <div class="hint">How often GitHub Shine polls GitHub for fresh data. Applies on the next refresh cycle.</div>
+                <div class="hint">How often GitHub Shine polls your accounts for fresh data. Applies on the next refresh cycle.</div>
             </div>
             <select value="@pollSeconds" @onchange="OnIntervalChanged">
                 @foreach (var seconds in intervalOptions)
@@ -176,6 +211,7 @@
 </div>
 
 @code {
+    NotificationPrefs notify = NotificationPrefs.Default;
     bool muted;
     RepoSort sort = RepoSort.Stars;
     int pollSeconds = 60;
@@ -227,6 +263,8 @@
     protected override async Task OnInitializedAsync()
     {
         Config.PreferencesChanged += OnPreferencesChanged;
+        // The tray menu can mute from outside this page — keep the switch honest.
+        NotifyPrefs.Changed += OnPreferencesChanged;
         await LoadAsync();
     }
 
@@ -283,7 +321,8 @@
     async Task LoadAsync()
     {
         access = await Notifications.CheckAsync();
-        muted = await Config.GetNotificationsMutedAsync();
+        notify = await NotifyPrefs.GetAsync();
+        muted = notify.Muted;
         sort = await Config.GetRepoSortAsync();
         pollSeconds = (int)(await Config.GetPollIntervalAsync()).TotalSeconds;
         // A stored value from an older build might not match a preset — show it anyway.
@@ -361,7 +400,14 @@
     async Task OnMuteChanged(ChangeEventArgs e)
     {
         muted = (bool)e.Value!;
-        await Config.SetNotificationsMutedAsync(muted);
+        notify = notify with { Muted = muted };
+        await NotifyPrefs.SaveAsync(notify);
+    }
+
+    async Task OnCategoryChangedAsync(NotificationCategory category, ChangeEventArgs e)
+    {
+        notify = notify.With(category, (bool)e.Value!);
+        await NotifyPrefs.SaveAsync(notify);
     }
 
     async Task OnSortChanged(ChangeEventArgs e)
@@ -428,5 +474,8 @@
     }
 
     public void Dispose()
-        => Config.PreferencesChanged -= OnPreferencesChanged;
+    {
+        Config.PreferencesChanged -= OnPreferencesChanged;
+        NotifyPrefs.Changed -= OnPreferencesChanged;
+    }
 }

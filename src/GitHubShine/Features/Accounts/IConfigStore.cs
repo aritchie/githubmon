@@ -8,8 +8,9 @@ public interface IConfigStore
     /// <summary>Raised when accounts/repos change — consumers re-read <see cref="Accounts"/>.</summary>
     event EventHandler? Changed;
 
-    /// <summary>Raised when a user preference (mute, repo sort, poll interval) changes. Kept
-    /// separate from <see cref="Changed"/> so a pref tweak doesn't trigger a full account refresh.</summary>
+    /// <summary>Raised when a user preference (repo sort, poll interval) changes. Kept
+    /// separate from <see cref="Changed"/> so a pref tweak doesn't trigger a full account refresh.
+    /// Notification preferences have their own store and event — see INotificationPrefsStore.</summary>
     event EventHandler? PreferencesChanged;
 
     Task ReloadAsync(CancellationToken ct = default);
@@ -18,9 +19,6 @@ public interface IConfigStore
 
     Task<TimeSpan> GetPollIntervalAsync();
     Task SetPollIntervalAsync(TimeSpan interval);
-
-    Task<bool> GetNotificationsMutedAsync();
-    Task SetNotificationsMutedAsync(bool muted);
 
     /// <summary>How the repo list is ordered in the dashboard sidebar and the tray menu.</summary>
     Task<RepoSort> GetRepoSortAsync();

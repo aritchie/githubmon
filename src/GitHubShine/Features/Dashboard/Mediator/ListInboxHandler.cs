@@ -10,7 +10,7 @@ public sealed class ListInboxHandler(IGitProviderFactory factory, ILogger<ListIn
     {
         var provider = await factory.CreateAsync(request.Account, cancellationToken).ConfigureAwait(false);
         if (provider is null)
-            return Array.Empty<InboxItem>();
+            return [];
 
         try
         {
@@ -19,7 +19,7 @@ public sealed class ListInboxHandler(IGitProviderFactory factory, ILogger<ListIn
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Failed inbox for {Account}", request.Account.Label);
-            return Array.Empty<InboxItem>();
+            return [];
         }
     }
 }

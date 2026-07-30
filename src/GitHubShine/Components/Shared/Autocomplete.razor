@@ -47,7 +47,7 @@
 @code {
     const int MaxVisible = 60;
 
-    [Parameter, EditorRequired] public IReadOnlyList<TItem> Items { get; set; } = Array.Empty<TItem>();
+    [Parameter, EditorRequired] public IReadOnlyList<TItem> Items { get; set; } = [];
 
     /// <summary>The item's primary line — also what the input shows once it's picked, and what's matched against.</summary>
     [Parameter, EditorRequired] public Func<TItem, string> ItemText { get; set; } = _ => "";

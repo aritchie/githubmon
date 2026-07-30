@@ -2,23 +2,15 @@ using Shiny.Mediator;
 
 namespace GitHubShine.Dashboard;
 
-public sealed class PollerInitializer : IMauiInitializeService, IDisposable
+public sealed class PollerInitializer(
+    IConfigStore config,
+    IMediator mediator,
+    RateLimitMonitor rateLimits,
+    ILogger<PollerInitializer> logger) : IMauiInitializeService, IDisposable
 {
-    readonly IConfigStore config;
-    readonly IMediator mediator;
-    readonly RateLimitMonitor rateLimits;
-    readonly ILogger<PollerInitializer> logger;
     CancellationTokenSource? cts;
     Task? loop;
     volatile TaskCompletionSource wakeSignal = NewSignal();
-
-    public PollerInitializer(IConfigStore config, IMediator mediator, RateLimitMonitor rateLimits, ILogger<PollerInitializer> logger)
-    {
-        this.config = config;
-        this.mediator = mediator;
-        this.rateLimits = rateLimits;
-        this.logger = logger;
-    }
 
     static TaskCompletionSource NewSignal()
         => new(TaskCreationOptions.RunContinuationsAsynchronously);

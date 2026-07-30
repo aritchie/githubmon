@@ -134,7 +134,9 @@ public static class MauiProgram
             options.MapTypeToTable<StoredToken>();
             options.MapTypeToTable<SeenFailedRun>();
             options.MapTypeToTable<SeenInboxItem>();
+            options.MapTypeToTable<SeenWorkflowState>();
             options.MapTypeToTable<DashboardPrefs>();
+            options.MapTypeToTable<NotificationPrefs>();
             options.MapTypeToTable<SyncMapping>();
             options.MapTypeToTable<AutoSyncPrefs>();
         });
@@ -153,6 +155,7 @@ public static class MauiProgram
 #endif
         builder.Services.AddSingletonAsImplementedInterfaces<PollerInitializer>();
         builder.Services.AddSingletonAsImplementedInterfaces<NotificationAccessInitializer>();
+        builder.Services.AddSingletonAsImplementedInterfaces<NotificationPrefsInitializer>();
 
 #if MACOS
         builder.Services.AddSingleton<IFileDialogs, GitHubShine.Platforms.MacOS.MacFileDialogs>();

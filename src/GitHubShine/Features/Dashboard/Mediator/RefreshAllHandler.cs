@@ -39,11 +39,18 @@ public sealed class RefreshAllHandler(IConfigStore config, SnapshotCache cache, 
                     if (!force)
                         continue; // cold-start paint only — no notifications, no baseline priming
 
+                    // Build status. Both of these prime themselves off records in the document
+                    // store rather than the in-memory `primed` set below, so they survive a
+                    // restart without re-announcing and without going quiet.
                     foreach (var run in await cache.NewlyFailedRunsAsync(snap, cancellationToken).ConfigureAwait(false))
                         await context.Publish(new WorkflowRunFailedEvent(account.Id, repo, run), cancellationToken: cancellationToken).ConfigureAwait(false);
 
-                    // Only diff for new PRs/issues once this repo already had a live baseline from a
-                    // prior forced cycle — so a restart never re-notifies about everything already open.
+                    foreach (var run in await cache.RecoveredRunsAsync(snap, cancellationToken).ConfigureAwait(false))
+                        await context.Publish(new WorkflowRunRecoveredEvent(account.Id, repo, run), cancellationToken: cancellationToken).ConfigureAwait(false);
+
+                    // Only diff PRs/issues/stars/forks once this repo already had a live baseline
+                    // from a prior forced cycle — so a restart never re-notifies about everything
+                    // already open, and the first live fetch isn't read as "+400 stars".
                     var hadLiveBaseline = !primed.TryAdd(Key(account.Id, repo), 0);
                     if (hadLiveBaseline && prev is not null && !prev.HasError && !snap.HasError)
                     {
@@ -54,6 +61,17 @@ public sealed class RefreshAllHandler(IConfigStore config, SnapshotCache cache, 
                         var newIssues = snap.OpenIssues - prev.OpenIssues;
                         if (newIssues > 0)
                             await context.Publish(new NewIssuesEvent(account.Id, repo, newIssues, snap.OpenIssues), cancellationToken: cancellationToken).ConfigureAwait(false);
+
+                        // Stars and forks are counts in the repo summary the poll already fetches,
+                        // so a delta is free. Only upward moves are interesting — an unstar or a
+                        // deleted fork isn't worth an alert.
+                        var newStars = snap.Stars - prev.Stars;
+                        if (newStars > 0)
+                            await context.Publish(new NewStarsEvent(account.Id, repo, newStars, snap.Stars), cancellationToken: cancellationToken).ConfigureAwait(false);
+
+                        var newForks = snap.Forks - prev.Forks;
+                        if (newForks > 0)
+                            await context.Publish(new NewForksEvent(account.Id, repo, newForks, snap.Forks), cancellationToken: cancellationToken).ConfigureAwait(false);
                     }
                 }
                 catch (Exception ex)

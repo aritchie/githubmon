@@ -16,7 +16,11 @@ public interface IDatabaseBackup
 public sealed class SqliteDatabaseBackup(IConfigStore config, IGitProviderFactory factory) : IDatabaseBackup
 {
     // Tables owned by the DocumentStore (see MapTypeToTable calls in MauiProgram).
-    static readonly string[] Tables = ["MonitoredAccount", "StoredToken", "SeenFailedRun", "SeenInboxItem", "DashboardPrefs"];
+    static readonly string[] Tables =
+    [
+        "MonitoredAccount", "StoredToken", "SeenFailedRun", "SeenInboxItem",
+        "SeenWorkflowState", "DashboardPrefs", "NotificationPrefs"
+    ];
 
     public async Task BackupToAsync(string destinationPath, CancellationToken ct = default)
     {

@@ -10,7 +10,6 @@ public sealed class ConfigStore(
     [FromKeyedServices(StoreKeys.Default)] IKeyValueStore prefs) : IConfigStore
 {
     const string KeyPollSeconds = "pollSeconds";
-    const string KeyMuted = "muted";
     const string KeyRepoOrder = "repoOrder";
     const string KeyRepoSort = "repoSort";
     // A conservative baseline: with ETag conditional requests making unchanged polls essentially
@@ -18,15 +17,13 @@ public sealed class ConfigStore(
     // API pressure well under control while staying responsive. Users can still lower it (floor 15s).
     const int DefaultPollSeconds = 120;
 
-    IReadOnlyList<MonitoredAccount> accounts = Array.Empty<MonitoredAccount>();
-
-    public IReadOnlyList<MonitoredAccount> Accounts => accounts;
+    public IReadOnlyList<MonitoredAccount> Accounts { get; private set; } = [];
     public event EventHandler? Changed;
     public event EventHandler? PreferencesChanged;
 
     public async Task ReloadAsync(CancellationToken ct = default)
     {
-        accounts = await store
+        this.Accounts = await store
             .Query<MonitoredAccount>()
             .ToList(ct)
             .ConfigureAwait(false);
@@ -57,16 +54,6 @@ public sealed class ConfigStore(
         return Task.CompletedTask;
     }
 
-    public Task<bool> GetNotificationsMutedAsync()
-        => Task.FromResult(prefs.Get(KeyMuted, false));
-
-    public Task SetNotificationsMutedAsync(bool muted)
-    {
-        prefs.Set(KeyMuted, muted);
-        PreferencesChanged?.Invoke(this, EventArgs.Empty);
-        return Task.CompletedTask;
-    }
-
     public Task<RepoSort> GetRepoSortAsync()
         => Task.FromResult((RepoSort)prefs.Get(KeyRepoSort, (int)RepoSort.Stars));
 
@@ -88,7 +75,7 @@ public sealed class ConfigStore(
         // One-time migration from the legacy prefs-store encoding.
         var raw = prefs.Get(KeyRepoOrder, "");
         if (string.IsNullOrEmpty(raw))
-            return Array.Empty<string>();
+            return [];
         var order = raw.Split('\n', StringSplitOptions.RemoveEmptyEntries).ToList();
         await store.Upsert(new DashboardPrefs(DashboardPrefs.DefaultId, order)).ConfigureAwait(false);
         prefs.Remove(KeyRepoOrder);

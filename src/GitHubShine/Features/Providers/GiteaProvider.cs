@@ -11,21 +11,23 @@ namespace GitHubShine.Providers;
 /// GitHub provider produces. Parsing is done with <see cref="JsonDocument"/> (AOT/trim
 /// safe, no serializer context needed) since we only pluck a few fields per response.
 /// </summary>
-public sealed class GiteaProvider : IGitProvider
+public sealed class GiteaProvider(HttpClient client, string? hostUrl, string token, string accountId) : IGitProvider
 {
-    readonly HttpClient http;
-    readonly string accountId;
+    readonly HttpClient http = Configure(client, hostUrl, token);
 
-    public GiteaProvider(HttpClient http, string? hostUrl, string token, string accountId)
+    /// <summary>
+    /// Points the injected client at <c>{host}/api/v1/</c> and attaches the token. Unlike GitHub,
+    /// there is no default host to fall back on — a Gitea account without one can't be used at all.
+    /// </summary>
+    static HttpClient Configure(HttpClient client, string? hostUrl, string token)
     {
         if (string.IsNullOrWhiteSpace(hostUrl))
             throw new InvalidOperationException("A Gitea account requires a host URL (e.g. https://gitea.com).");
 
-        this.http = http;
-        this.accountId = accountId;
-        this.http.BaseAddress = new Uri(hostUrl.TrimEnd('/') + "/api/v1/");
-        this.http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("token", token);
-        this.http.DefaultRequestHeaders.UserAgent.ParseAdd("GitHubShine/1.0");
+        client.BaseAddress = new Uri(hostUrl.TrimEnd('/') + "/api/v1/");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("token", token);
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("GitHubShine/1.0");
+        return client;
     }
 
     public async Task<RepoSnapshotData> GetRepoSnapshotAsync(MonitoredRepo repo, int runCount, CancellationToken ct = default)
@@ -79,7 +81,7 @@ public sealed class GiteaProvider : IGitProvider
         {
             using var doc = await GetJsonAsync($"repos/{repo.Owner}/{repo.Name}/actions/tasks?limit={count}", ct).ConfigureAwait(false);
             if (!doc.RootElement.TryGetProperty("workflow_runs", out var runs) || runs.ValueKind != JsonValueKind.Array)
-                return Array.Empty<WorkflowRunSummary>();
+                return [];
 
             var list = new List<WorkflowRunSummary>();
             foreach (var r in runs.EnumerateArray())
@@ -97,7 +99,7 @@ public sealed class GiteaProvider : IGitProvider
         }
         catch
         {
-            return Array.Empty<WorkflowRunSummary>();
+            return [];
         }
     }
 

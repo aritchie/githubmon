@@ -9,32 +9,34 @@ namespace GitHubShine.Providers;
 /// repo archiver, and the account-edit validate flow. A non-null <c>hostUrl</c>
 /// targets a GitHub Enterprise server; null uses github.com.
 /// </summary>
-public sealed class GitHubProvider : IGitProvider
+public sealed class GitHubProvider(
+    string? hostUrl,
+    string token,
+    string accountId,
+    RateLimitMonitor rateLimits,
+    ILogger etagLogger) : IGitProvider
 {
     static readonly ProductHeaderValue Product = new("GitHubShine", "1.0");
 
-    readonly GitHubClient client;
-    readonly string accountId;
+    readonly GitHubClient client = BuildClient(hostUrl, token, rateLimits, etagLogger);
 
-    public GitHubProvider(string? hostUrl, string token, string accountId, RateLimitMonitor rateLimits, ILogger etagLogger)
+    /// <summary>
+    /// Builds the Octokit connection over a <see cref="ConditionalGetHandler"/> so every request
+    /// carries If-None-Match and unchanged resources come back as free 304s (see the handler for
+    /// why that matters to the rate limit). Octokit has no built-in ETag support, so we own the
+    /// HTTP pipeline here rather than using the convenience GitHubClient constructors.
+    /// </summary>
+    static GitHubClient BuildClient(string? hostUrl, string token, RateLimitMonitor rateLimits, ILogger etagLogger)
     {
-        this.accountId = accountId;
-
-        // Build the Octokit connection over a ConditionalGetHandler so every request carries
-        // If-None-Match and unchanged resources come back as free 304s (see the handler for why
-        // that matters to the rate limit). Octokit has no built-in ETag support, so we own the
-        // HTTP pipeline here rather than using the convenience GitHubClient constructors.
-        var baseAddress = string.IsNullOrWhiteSpace(hostUrl) ? GitHubClient.GitHubApiUrl : new Uri(hostUrl);
+        // One handler, captured by the adapter's factory — a fresh instance per request would
+        // throw away the ETag cache that makes the 304s possible.
         var handler = new ConditionalGetHandler(new HttpClientHandler(), rateLimits, etagLogger);
-        var httpClient = new HttpClientAdapter(() => handler);
-        var connection = new Connection(
+        return new GitHubClient(new Connection(
             Product,
-            baseAddress,
+            string.IsNullOrWhiteSpace(hostUrl) ? GitHubClient.GitHubApiUrl : new Uri(hostUrl),
             new InMemoryCredentialStore(new Credentials(token)),
-            httpClient,
-            new SimpleJsonSerializer());
-
-        this.client = new GitHubClient(connection);
+            new HttpClientAdapter(() => handler),
+            new SimpleJsonSerializer()));
     }
 
     public async Task<RepoSnapshotData> GetRepoSnapshotAsync(MonitoredRepo repo, int runCount, CancellationToken ct = default)

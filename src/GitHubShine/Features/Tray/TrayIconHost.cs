@@ -12,6 +12,7 @@ namespace GitHubShine.Tray;
 public sealed class TrayIconHost(
     ITrayIconFactory factory,
     IConfigStore config,
+    INotificationPrefsStore notifyPrefs,
     SnapshotCache cache,
     IMediator mediator,
     IBrowser browser,
@@ -48,6 +49,7 @@ public sealed class TrayIconHost(
             // snapshots change the per-repo counts, build state, and ordering.
             config.Changed += OnConfigChanged;
             config.PreferencesChanged += OnConfigChanged;
+            notifyPrefs.Changed += OnConfigChanged;
             subscriptions.Add(mediator.Subscribe<SnapshotUpdatedEvent>((_, _, _) =>
             {
                 RequestMenuRebuild();
@@ -91,7 +93,8 @@ public sealed class TrayIconHost(
         if (trayIcon is null) return;
         try
         {
-            var muted = config.GetNotificationsMutedAsync().GetAwaiter().GetResult();
+            // Cached, so this stays a synchronous read now that mute lives in the document store.
+            var muted = notifyPrefs.Current.Muted;
             var sort = config.GetRepoSortAsync().GetAwaiter().GetResult();
             var repos = OrderedRepos(sort);
 
@@ -125,7 +128,8 @@ public sealed class TrayIconHost(
                     }
                 });
                 menu.Separator();
-                menu.Check("Mute notifications", muted, isMuted => _ = config.SetNotificationsMutedAsync(isMuted));
+                menu.Check("Mute notifications", muted,
+                    isMuted => _ = notifyPrefs.SaveAsync(notifyPrefs.Current with { Muted = isMuted }));
                 menu.Separator();
                 menu.Item("Quit", QuitApp);
             }));
@@ -239,6 +243,7 @@ public sealed class TrayIconHost(
             trayIcon.PrimaryClick -= OnPrimaryClick;
         config.Changed -= OnConfigChanged;
         config.PreferencesChanged -= OnConfigChanged;
+        notifyPrefs.Changed -= OnConfigChanged;
         foreach (var sub in subscriptions) sub.Dispose();
         subscriptions.Clear();
     }

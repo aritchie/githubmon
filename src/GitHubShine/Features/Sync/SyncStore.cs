@@ -59,15 +59,13 @@ public interface ISyncStore
 [Singleton]
 public sealed class SyncStore(IDocumentStore store) : ISyncStore
 {
-    IReadOnlyList<SyncMapping> mappings = Array.Empty<SyncMapping>();
-
-    public IReadOnlyList<SyncMapping> Mappings => this.mappings;
+    public IReadOnlyList<SyncMapping> Mappings { get; private set; } = [];
     public event EventHandler? Changed;
     public event EventHandler? AutoSyncChanged;
 
     public async Task ReloadAsync(CancellationToken ct = default)
     {
-        this.mappings = await store
+        this.Mappings = await store
             .Query<SyncMapping>()
             .ToList(ct)
             .ConfigureAwait(false);
@@ -128,9 +126,9 @@ public sealed class SyncStore(IDocumentStore store) : ISyncStore
         // Work from what's actually persisted — the caller may have been holding a stale cache.
         await this.ReloadAsync(ct).ConfigureAwait(false);
 
-        var doomed = this.mappings.Where(predicate).ToList();
+        var doomed = this.Mappings.Where(predicate).ToList();
         if (doomed.Count == 0)
-            return Array.Empty<SyncMapping>();
+            return [];
 
         foreach (var mapping in doomed)
             await store.Remove<SyncMapping>(mapping.Id, ct).ConfigureAwait(false);

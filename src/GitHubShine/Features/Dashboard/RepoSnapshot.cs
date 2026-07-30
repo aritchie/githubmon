@@ -19,7 +19,7 @@ public sealed record RepoSnapshot(
 
     public static RepoSnapshot Empty(string accountId, MonitoredRepo repo, string? error = null)
         => new(accountId, repo, DateTimeOffset.UtcNow, 0, 0, 0, 0,
-            Array.Empty<PullRequestSummary>(), Array.Empty<WorkflowRunSummary>(), error);
+            [], [], error);
 }
 
 public sealed record PullRequestSummary(

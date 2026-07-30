@@ -226,7 +226,7 @@ public sealed class RepoSyncEngine(
         CancellationToken ct)
     {
         if (mapping.BranchMode == SyncBranchMode.All)
-            return Array.Empty<string>();
+            return [];
 
         var wanted = mapping.BranchMode == SyncBranchMode.Named
             ? (mapping.Branches ?? new List<string>())
