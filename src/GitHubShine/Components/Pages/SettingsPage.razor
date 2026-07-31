@@ -15,7 +15,7 @@
     <div class="page-header">
         <div>
             <h1>Settings</h1>
-            <span class="subtitle">Notifications, alert categories, repository ordering, refresh interval, and backups.</span>
+            <span class="subtitle">Notifications, alert categories, refresh interval, and backups.</span>
         </div>
     </div>
 
@@ -103,22 +103,6 @@
                 </label>
             </div>
         }
-    </div>
-
-    <div class="card">
-        <h2>Repositories</h2>
-        <div class="setting-row">
-            <div class="setting-label">
-                <div><strong>Sort order</strong></div>
-                <div class="hint">Controls how repositories are ordered in the dashboard sidebar and the tray-icon menu.</div>
-            </div>
-            <select value="@sort" @onchange="OnSortChanged">
-                @foreach (var option in RepoSortInfo.All)
-                {
-                    <option value="@option">@RepoSortInfo.Label(option)</option>
-                }
-            </select>
-        </div>
     </div>
 
     <div class="card">
@@ -213,7 +197,6 @@
 @code {
     NotificationPrefs notify = NotificationPrefs.Default;
     bool muted;
-    RepoSort sort = RepoSort.Stars;
     int pollSeconds = 60;
     AccessState access = AccessState.Unknown;
     bool isBusyNotify;
@@ -323,7 +306,6 @@
         access = await Notifications.CheckAsync();
         notify = await NotifyPrefs.GetAsync();
         muted = notify.Muted;
-        sort = await Config.GetRepoSortAsync();
         pollSeconds = (int)(await Config.GetPollIntervalAsync()).TotalSeconds;
         // A stored value from an older build might not match a preset — show it anyway.
         intervalOptions = presetIntervals.Contains(pollSeconds)
@@ -408,15 +390,6 @@
     {
         notify = notify.With(category, (bool)e.Value!);
         await NotifyPrefs.SaveAsync(notify);
-    }
-
-    async Task OnSortChanged(ChangeEventArgs e)
-    {
-        if (Enum.TryParse<RepoSort>(e.Value?.ToString(), out var parsed))
-        {
-            sort = parsed;
-            await Config.SetRepoSortAsync(sort);
-        }
     }
 
     async Task OnIntervalChanged(ChangeEventArgs e)

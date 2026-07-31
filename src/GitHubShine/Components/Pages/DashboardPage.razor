@@ -5,7 +5,6 @@
 @inject SnapshotCache Cache
 @inject NavigationManager Nav
 @inject IBrowser Browser
-@inject IJSRuntime JS
 
 <div class="page">
     <div class="page-header">
@@ -68,38 +67,6 @@
                 <span class="muted">@visibleCards.Count of @cards.Count</span>
             }
         </div>
-        <div class="repo-layout">
-            <aside class="card repo-sidebar">
-                <div class="sort-row">
-                    <label for="repo-sort">Sort by</label>
-                    <select id="repo-sort" value="@sort" @onchange="OnSortChanged">
-                        @foreach (var option in RepoSortInfo.All)
-                        {
-                            <option value="@option">@RepoSortInfo.Label(option)</option>
-                        }
-                    </select>
-                </div>
-                @if (sidebarCards.Count == 0)
-                {
-                    <div class="muted" style="padding:8px 10px;">No repos</div>
-                }
-                else
-                {
-                    <div class="sidebar-list">
-                        @foreach (var card in sidebarCards)
-                        {
-                            <button class="sidebar-repo @(focusedKey == card.Key ? "active" : "")"
-                                    @key="card.Key"
-                                    @onclick="() => FocusCardAsync(card)">
-                                <span class="status-dot @StatusDotClass(card)" title="@(card.LatestRunStatus ?? "No runs")"></span>
-                                <span class="s-name" title="@card.Title">@card.Title</span>
-                                <span class="s-metric">@SortMetric(card)</span>
-                            </button>
-                        }
-                    </div>
-                }
-            </aside>
-            <div class="repo-main">
         <div class="card totals-bar">
             <div class="total">
                 <span class="total-value">@cards.Sum(c => c.Stars)</span>
@@ -139,8 +106,7 @@
         <div class="repo-grid">
             @foreach (var card in visibleCards)
             {
-                <div class="card repo-card @(dragKey == card.Key ? "dragging" : "") @(focusedKey == card.Key ? "focused" : "")"
-                     id="@CardElementId(card)"
+                <div class="card repo-card @(dragKey == card.Key ? "dragging" : "")"
                      @key="card.Key"
                      draggable="true"
                      @ondragstart="() => dragKey = card.Key"
@@ -196,8 +162,6 @@
                 </div>
             }
         </div>
-            </div>
-        </div>
     }
 </div>
 
@@ -210,8 +174,6 @@
     string? statusText;
     string? dragKey;
     string searchText = "";
-    string? focusedKey;
-    RepoSort sort = RepoSort.Stars;
     List<string> savedOrder = new();
 
     // The cards visible after applying the search filter. A blank search shows everything.
@@ -223,83 +185,19 @@
                          || c.AccountLabel.Contains(searchText, StringComparison.OrdinalIgnoreCase))
                 .ToList();
 
-    // The same set of cards as the grid, ordered for the sidebar by the chosen metric (highest first).
-    // The grid keeps the user's drag order; the sidebar is an independent, sorted view.
-    IReadOnlyList<RepoCardModel> sidebarCards => sort switch
-    {
-        RepoSort.Forks => visibleCards.OrderByDescending(c => c.Forks).ThenBy(c => c.Title).ToList(),
-        RepoSort.Watchers => visibleCards.OrderByDescending(c => c.Watchers).ThenBy(c => c.Title).ToList(),
-        RepoSort.OpenIssues => visibleCards.OrderByDescending(c => c.OpenIssues).ThenBy(c => c.Title).ToList(),
-        RepoSort.OpenPullRequests => visibleCards.OrderByDescending(c => c.OpenPullRequests).ThenBy(c => c.Title).ToList(),
-        RepoSort.BuildState => visibleCards.OrderByDescending(BuildRank).ThenByDescending(c => c.Stars).ThenBy(c => c.Title).ToList(),
-        _ => visibleCards.OrderByDescending(c => c.Stars).ThenBy(c => c.Title).ToList(),
-    };
-
-    // Failing builds are the most actionable, so they sort to the top, then running, passing, and unknown.
-    static int BuildRank(RepoCardModel c)
-        => c.LatestRunFailed ? 3
-         : c.LatestRunStatus == "Running" ? 2
-         : c.LatestRunSucceeded ? 1
-         : 0;
-
-    string SortMetric(RepoCardModel c) => sort switch
-    {
-        RepoSort.Forks => $"⑂ {c.Forks}",
-        RepoSort.Watchers => $"👁 {c.Watchers}",
-        RepoSort.OpenIssues => $"{c.OpenIssues} issues",
-        RepoSort.OpenPullRequests => $"{c.OpenPullRequests} PRs",
-        RepoSort.BuildState => c.LatestRunStatus ?? "—",
-        _ => $"★ {c.Stars}",
-    };
-
-    static string StatusDotClass(RepoCardModel c)
-        => c.LatestRunFailed ? "bad"
-         : c.LatestRunSucceeded ? "ok"
-         : c.LatestRunStatus == "Running" ? "run"
-         : "";
-
-    // A DOM-safe id derived from the card key so the sidebar can scroll the matching grid card into view.
-    static string CardElementId(RepoCardModel card)
-        => "repo-" + new string(card.Key.Select(ch => char.IsLetterOrDigit(ch) ? ch : '-').ToArray());
-
     void OnSearchChanged(ChangeEventArgs e)
         => searchText = e.Value?.ToString() ?? "";
-
-    async Task OnSortChanged(ChangeEventArgs e)
-    {
-        if (Enum.TryParse<RepoSort>(e.Value?.ToString(), out var parsed) && parsed != sort)
-        {
-            sort = parsed;
-            await Config.SetRepoSortAsync(sort);
-        }
-    }
-
-    async Task FocusCardAsync(RepoCardModel card)
-    {
-        focusedKey = card.Key;
-        await JS.InvokeVoidAsync("gitHubMon.focusCard", CardElementId(card));
-    }
 
     protected override async Task OnInitializedAsync()
     {
         subs.Add(Mediator.Subscribe<SnapshotUpdatedEvent>(OnSnapshotUpdated));
         subs.Add(Mediator.Subscribe<InboxUpdatedEvent>(OnInboxUpdated));
         Config.Changed += OnConfigChanged;
-        Config.PreferencesChanged += OnPreferencesChanged;
 
         savedOrder = (await Config.GetRepoOrderAsync()).ToList();
-        sort = await Config.GetRepoSortAsync();
         await Config.ReloadAsync();
         RebuildCards();
     }
-
-    // The repo sort can also be changed from the Settings tab — keep the sidebar in sync.
-    void OnPreferencesChanged(object? sender, EventArgs e)
-        => _ = InvokeAsync(async () =>
-        {
-            sort = await Config.GetRepoSortAsync();
-            StateHasChanged();
-        });
 
     void RebuildCards()
     {
@@ -423,7 +321,6 @@
     public void Dispose()
     {
         Config.Changed -= OnConfigChanged;
-        Config.PreferencesChanged -= OnPreferencesChanged;
         foreach (var s in subs)
             s.Dispose();
     }

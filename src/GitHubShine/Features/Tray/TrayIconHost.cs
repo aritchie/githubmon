@@ -32,6 +32,12 @@ public sealed class TrayIconHost(
     string? lastMenuSignature;
     string? lastTooltip;
 
+    // Cached so RebuildMenu can stay synchronous. The grid sort lives in the document
+    // store, so reading it inline would mean blocking on SQLite from whatever thread the
+    // rebuild came in on — including the UI thread, via the config-changed event. Same
+    // reasoning as the cached mute flag below.
+    RepoGridSort currentSort = RepoGridSort.Default;
+
     public void Initialize(IServiceProvider services)
     {
         try
@@ -43,9 +49,12 @@ public sealed class TrayIconHost(
             // Left/primary click opens the dashboard; the menu (set in RebuildMenu) is
             // reserved for right/secondary click.
             trayIcon.PrimaryClick += OnPrimaryClick;
+            // Paint immediately with the default sort so a right-click always has a menu,
+            // then fill in the stored sort and redraw if it differs.
             RebuildMenu();
+            _ = ReloadSortAndRebuildAsync();
 
-            // Accounts and the repo-sort preference both change the repo submenu;
+            // Accounts and the grid-sort preference both change the repo submenu;
             // snapshots change the per-repo counts, build state, and ordering.
             config.Changed += OnConfigChanged;
             config.PreferencesChanged += OnConfigChanged;
@@ -72,6 +81,21 @@ public sealed class TrayIconHost(
     void OnConfigChanged(object? sender, EventArgs e)
     {
         lastMenuSignature = null;
+        _ = ReloadSortAndRebuildAsync();
+    }
+
+    // The grid sort is one of the things a preference change can alter, so refresh the
+    // cached copy off-thread before redrawing.
+    async Task ReloadSortAndRebuildAsync()
+    {
+        try
+        {
+            currentSort = await config.GetRepoGridSortAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to read the repositories grid sort; keeping the previous one");
+        }
         RebuildMenu();
     }
 
@@ -95,14 +119,14 @@ public sealed class TrayIconHost(
         {
             // Cached, so this stays a synchronous read now that mute lives in the document store.
             var muted = notifyPrefs.Current.Muted;
-            var sort = config.GetRepoSortAsync().GetAwaiter().GetResult();
-            var repos = OrderedRepos(sort);
+            var sort = currentSort;
+            var repos = sort.Order(Cards());
 
             // Everything the menu renders, in order — if it matches the last push,
             // there's nothing to redraw and we avoid leaking another native menu tree.
             var signature = string.Join("\n",
-                repos.Select(r => $"{StatusIcon(r.Snapshot)}|{r.Repo.FullName}|{Metric(r.Snapshot, sort)}")
-                    .Prepend($"muted={muted};sort={sort};count={repos.Count}"));
+                repos.Select(c => $"{StatusIcon(c)}|{c.Title}|{Metric(c, sort)}")
+                    .Prepend($"muted={muted};sort={sort.ColumnId}:{sort.Descending};count={repos.Count}"));
             if (signature == lastMenuSignature)
                 return;
             lastMenuSignature = signature;
@@ -120,11 +144,14 @@ public sealed class TrayIconHost(
                         return;
                     }
 
-                    foreach (var (account, repo, snap) in repos)
+                    foreach (var card in repos)
                     {
-                        var url = $"{account.WebBaseUrl}/{repo.FullName}";
-                        sub.Item($"{StatusIcon(snap)}  {repo.FullName}  ·  {Metric(snap, sort)}",
-                            () => _ = browser.OpenAsync(url, BrowserLaunchMode.External));
+                        var url = card.RepoUrl;
+                        var metric = Metric(card, sort);
+                        var label = metric.Length == 0
+                            ? $"{StatusIcon(card)}  {card.Title}"
+                            : $"{StatusIcon(card)}  {card.Title}  ·  {metric}";
+                        sub.Item(label, () => _ = browser.OpenAsync(url, BrowserLaunchMode.External));
                     }
                 });
                 menu.Separator();
@@ -148,58 +175,52 @@ public sealed class TrayIconHost(
         }
     }
 
-    // Mirrors the dashboard sidebar ordering so the tray shows the same arrangement.
-    List<(MonitoredAccount Account, MonitoredRepo Repo, RepoSnapshot? Snapshot)> OrderedRepos(RepoSort sort)
+    // The same card models the Repositories page builds, so the menu's ordering and per-repo
+    // metric come out of exactly one implementation (RepoGridSort.Order) rather than a
+    // parallel copy that can drift. Rebuilds are debounced and content-guarded above, so the
+    // per-rebuild allocation is negligible.
+    List<RepoCardModel> Cards()
     {
-        var items = config.Accounts
-            .SelectMany(a => a.Repos.Select(r => (Account: a, Repo: r, Snapshot: cache.TryGet(a.Id, r))));
-
-        var ordered = sort switch
+        var cards = new List<RepoCardModel>();
+        foreach (var account in config.Accounts)
         {
-            RepoSort.Forks => items.OrderByDescending(x => x.Snapshot?.Forks ?? 0).ThenBy(x => x.Repo.FullName),
-            RepoSort.Watchers => items.OrderByDescending(x => x.Snapshot?.Watchers ?? 0).ThenBy(x => x.Repo.FullName),
-            RepoSort.OpenIssues => items.OrderByDescending(x => x.Snapshot?.OpenIssues ?? 0)
-                .ThenBy(x => x.Repo.FullName),
-            RepoSort.OpenPullRequests => items.OrderByDescending(x => x.Snapshot?.OpenPullRequests.Count ?? 0)
-                .ThenBy(x => x.Repo.FullName),
-            RepoSort.BuildState => items.OrderByDescending(x => BuildRank(x.Snapshot))
-                .ThenByDescending(x => x.Snapshot?.Stars ?? 0).ThenBy(x => x.Repo.FullName),
-            _ => items.OrderByDescending(x => x.Snapshot?.Stars ?? 0).ThenBy(x => x.Repo.FullName),
-        };
-        return ordered.ToList();
+            foreach (var repo in account.Repos)
+            {
+                var card = new RepoCardModel(account, repo);
+                var snap = cache.TryGet(account.Id, repo);
+                if (snap is not null)
+                    card.Apply(snap);
+                cards.Add(card);
+            }
+        }
+        return cards;
     }
 
-    // Failing builds sort to the top, then running, passing, and unknown — matches the sidebar.
-    static int BuildRank(RepoSnapshot? snap)
-    {
-        var head = snap?.RecentWorkflowRuns.FirstOrDefault();
-        if (head is null) return 0;
-        return head.IsFailed ? 3 : head.IsInProgress ? 2 : head.IsSuccess ? 1 : 0;
-    }
+    static string StatusIcon(RepoCardModel card)
+        => card.LatestRunFailed ? "✗"
+         : card.LatestRunStatus == "Running" ? "…"
+         : card.LatestRunSucceeded ? "✓"
+         : "•";
 
-    static string StatusIcon(RepoSnapshot? snap)
+    // The value the menu is ordered by, so the arrangement reads as deliberate. Sorting by
+    // repository name needs no metric — the name is already the label.
+    static string Metric(RepoCardModel card, RepoGridSort sort) => sort.ColumnId switch
     {
-        var head = snap?.RecentWorkflowRuns.FirstOrDefault();
-        if (head is null) return "•";
-        return head.IsFailed ? "✗" : head.IsInProgress ? "…" : head.IsSuccess ? "✓" : "•";
-    }
-
-    static string Metric(RepoSnapshot? snap, RepoSort sort) => sort switch
-    {
-        RepoSort.Forks => $"⑂ {snap?.Forks ?? 0}",
-        RepoSort.Watchers => $"👁 {snap?.Watchers ?? 0}",
-        RepoSort.OpenIssues => $"{snap?.OpenIssues ?? 0} issues",
-        RepoSort.OpenPullRequests => $"{snap?.OpenPullRequests.Count ?? 0} PRs",
-        RepoSort.BuildState => BuildStatusText(snap),
-        _ => $"★ {snap?.Stars ?? 0}",
+        RepoGridColumns.Repository => "",
+        RepoGridColumns.Account => card.AccountLabel,
+        RepoGridColumns.Forks => $"⑂ {card.Forks}",
+        RepoGridColumns.Watchers => $"👁 {card.Watchers}",
+        RepoGridColumns.OpenIssues => $"{card.OpenIssues} issues",
+        RepoGridColumns.OpenPullRequests => $"{card.OpenPullRequests} PRs",
+        RepoGridColumns.Build => BuildStatusText(card),
+        _ => $"★ {card.Stars}",
     };
 
-    static string BuildStatusText(RepoSnapshot? snap)
-    {
-        var head = snap?.RecentWorkflowRuns.FirstOrDefault();
-        if (head is null) return "no runs";
-        return head.IsFailed ? "failing" : head.IsInProgress ? "running" : head.IsSuccess ? "passing" : "—";
-    }
+    static string BuildStatusText(RepoCardModel card)
+        => card.LatestRunFailed ? "failing"
+         : card.LatestRunStatus == "Running" ? "running"
+         : card.LatestRunSucceeded ? "passing"
+         : "no runs";
 
     static void QuitApp()
     {

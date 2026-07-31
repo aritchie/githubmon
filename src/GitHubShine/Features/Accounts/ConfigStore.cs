@@ -11,7 +11,6 @@ public sealed class ConfigStore(
 {
     const string KeyPollSeconds = "pollSeconds";
     const string KeyRepoOrder = "repoOrder";
-    const string KeyRepoSort = "repoSort";
     // A conservative baseline: with ETag conditional requests making unchanged polls essentially
     // free, and adaptive back-off when the rate-limit budget runs low, this keeps steady-state
     // API pressure well under control while staying responsive. Users can still lower it (floor 15s).
@@ -54,34 +53,64 @@ public sealed class ConfigStore(
         return Task.CompletedTask;
     }
 
-    public Task<RepoSort> GetRepoSortAsync()
-        => Task.FromResult((RepoSort)prefs.Get(KeyRepoSort, (int)RepoSort.Stars));
-
-    public Task SetRepoSortAsync(RepoSort sort)
+    public async Task<RepoGridSort> GetRepoGridSortAsync()
     {
-        prefs.Set(KeyRepoSort, (int)sort);
-        PreferencesChanged?.Invoke(this, EventArgs.Empty);
-        return Task.CompletedTask;
+        var doc = await LoadDashboardPrefsAsync().ConfigureAwait(false);
+        // IsKnown guards a stored id whose column has since been renamed or dropped.
+        return doc.SortColumnId is { Length: > 0 } id && RepoGridColumns.IsKnown(id)
+            ? new RepoGridSort(id, doc.SortDescending ?? true)
+            : RepoGridSort.Default;
     }
 
-    // Card order lives in the document store (not the key/value prefs) so a raw
-    // SQLite backup carries it along with accounts and tokens.
+    public async Task SetRepoGridSortAsync(RepoGridSort sort)
+    {
+        var current = await LoadDashboardPrefsAsync().ConfigureAwait(false);
+        await SaveDashboardPrefsAsync(current with
+        {
+            SortColumnId = sort.ColumnId,
+            SortDescending = sort.Descending
+        }).ConfigureAwait(false);
+        PreferencesChanged?.Invoke(this, EventArgs.Empty);
+    }
+
     public async Task<IReadOnlyList<string>> GetRepoOrderAsync()
+        => (await LoadDashboardPrefsAsync().ConfigureAwait(false)).RepoOrder;
+
+    public async Task SetRepoOrderAsync(IReadOnlyList<string> orderedKeys)
+    {
+        var current = await LoadDashboardPrefsAsync().ConfigureAwait(false);
+        await SaveDashboardPrefsAsync(current with { RepoOrder = orderedKeys.ToList() })
+            .ConfigureAwait(false);
+    }
+
+    // patchIfUpdate: false — both setters above read the whole row, change one field and write
+    // it all back, so the stored body should be replaced, not RFC 7396 deep-merged into. The
+    // merge default leaves behind any member that has since been dropped from DashboardPrefs,
+    // which then reads back as a phantom (STJ ignores it, but it lingers in backups).
+    Task SaveDashboardPrefsAsync(DashboardPrefs updated)
+        => store.Upsert(updated, patchIfUpdate: false);
+
+    // Card order and grid sort share one document-store row (not the key/value prefs) so a
+    // raw SQLite backup carries them along with accounts and tokens — and because the
+    // key/value store is in-memory on the desktop heads, where they'd otherwise be lost on
+    // every restart. Both setters read-modify-write through here so neither clobbers the other.
+    async Task<DashboardPrefs> LoadDashboardPrefsAsync()
     {
         var doc = await store.Get<DashboardPrefs>(DashboardPrefs.DefaultId).ConfigureAwait(false);
         if (doc is not null)
-            return doc.RepoOrder;
+            return doc;
 
-        // One-time migration from the legacy prefs-store encoding.
+        // One-time migration of the card order from the legacy prefs-store encoding.
         var raw = prefs.Get(KeyRepoOrder, "");
         if (string.IsNullOrEmpty(raw))
-            return [];
-        var order = raw.Split('\n', StringSplitOptions.RemoveEmptyEntries).ToList();
-        await store.Upsert(new DashboardPrefs(DashboardPrefs.DefaultId, order)).ConfigureAwait(false);
-        prefs.Remove(KeyRepoOrder);
-        return order;
-    }
+            return new DashboardPrefs(DashboardPrefs.DefaultId, []);
 
-    public Task SetRepoOrderAsync(IReadOnlyList<string> orderedKeys)
-        => store.Upsert(new DashboardPrefs(DashboardPrefs.DefaultId, orderedKeys.ToList()));
+        var migrated = new DashboardPrefs(
+            DashboardPrefs.DefaultId,
+            raw.Split('\n', StringSplitOptions.RemoveEmptyEntries).ToList()
+        );
+        await SaveDashboardPrefsAsync(migrated).ConfigureAwait(false);
+        prefs.Remove(KeyRepoOrder);
+        return migrated;
+    }
 }

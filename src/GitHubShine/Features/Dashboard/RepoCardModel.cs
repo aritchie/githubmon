@@ -41,6 +41,19 @@ public sealed class RepoCardModel(MonitoredAccount account, MonitoredRepo repo)
     public string? ErrorMessage { get; private set; }
     public bool HasError { get; private set; }
 
+    /// <summary>
+    /// Build state as a sortable rank — failing builds are the most actionable so they
+    /// rank highest, then running, passing, and unknown. This is what the repositories
+    /// grid's "Build" column sorts on (a status string would sort alphabetically).
+    /// Derived from fields already in <see cref="RenderSignature"/>, so it needs no
+    /// entry of its own there.
+    /// </summary>
+    public int BuildRank
+        => LatestRunFailed ? 3
+         : LatestRunStatus == "Running" ? 2
+         : LatestRunSucceeded ? 1
+         : 0;
+
     // Everything the dashboard actually renders for this card. LastUpdated is
     // intentionally excluded — it isn't shown anywhere, so a poll that only
     // refreshes the fetch timestamp must not count as a change.
