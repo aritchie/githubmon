@@ -1,0 +1,549 @@
+name: Release
+
+# Tag a release with `git tag v1.2.3 && git push origin v1.2.3`, or run manually from the
+# Actions tab to produce a draft with an arbitrary version.
+#
+# Every platform head is built on the OS that GitHubShine.csproj targets for that head
+# (TargetFrameworks there is conditioned on the build OS), so:
+#   macOS runner   -> net10.0-macos (notarized DMG), net10.0-android, net10.0-ios (unsigned IPA)
+#   ubuntu runner  -> net10.0 (GTK4) tarball
+#   windows runner -> net10.0-windows10.0.19041.0 zip
+#
+# Required repository secrets are documented in docs/RELEASING.md.
+
+on:
+  push:
+    tags: [ 'v*' ]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build, without a leading v (e.g. 1.2.3)'
+        required: true
+        type: string
+      draft:
+        description: 'Create the release as a draft'
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+env:
+  DOTNET_NOLOGO: 'true'
+  DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 'true'
+  NUGET_PACKAGES: ${{ github.workspace }}/.nuget/packages
+  PROJECT: src/GitHubShine/GitHubShine.csproj
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # =======================================================================================
+  version:
+    name: Resolve version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}   # full, may carry a -beta suffix
+      numeric: ${{ steps.v.outputs.numeric }}   # dotted digits only, for build properties
+      build: ${{ steps.v.outputs.build }}
+      tag: ${{ steps.v.outputs.tag }}
+    steps:
+      - id: v
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="${{ inputs.version }}"
+            VERSION="${VERSION#v}"
+          fi
+          # ApplicationDisplayVersion becomes CFBundleShortVersionString / versionName, which
+          # must be plain dotted digits on Apple platforms — a "1.2.3-beta" tag would be
+          # rejected by the packager. Strip the pre-release suffix for build properties and
+          # keep the full string for asset and release naming.
+          NUMERIC="${VERSION%%-*}"
+          if [[ ! "$NUMERIC" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]]; then
+            echo "::error::version '$VERSION' is not a dotted numeric version"
+            exit 1
+          fi
+          {
+            echo "version=$VERSION"
+            echo "numeric=$NUMERIC"
+            # Android versionCode and CFBundleVersion must strictly increase across releases;
+            # run_number is the only always-increasing value available here.
+            echo "build=${{ github.run_number }}"
+            echo "tag=v$VERSION"
+          } >> "$GITHUB_OUTPUT"
+          echo "Building $VERSION (numeric $NUMERIC, build ${{ github.run_number }})"
+
+  # =======================================================================================
+  macos:
+    name: macOS (notarized DMG)
+    needs: version
+    # Override with a `MACOS_RUNNER` repository variable if the default image's Xcode does not
+    # match what the .NET `macos` workload expects (it tracks the current Xcode major).
+    runs-on: ${{ vars.MACOS_RUNNER || 'macos-26' }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      - uses: actions/cache@v6
+        with:
+          path: ${{ env.NUGET_PACKAGES }}
+          key: nuget-macos-${{ hashFiles('Directory.Packages.props', '**/*.csproj') }}
+          restore-keys: nuget-macos-
+
+      - name: Select newest Xcode
+        run: |
+          set -euo pipefail
+          XC="$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -1)"
+          [[ -n "$XC" ]] || { echo "::error::no Xcode found on the runner"; exit 1; }
+          sudo xcode-select -s "$XC"
+          # Xamarin.MacDev.Tasks reads MD_APPLE_SDK_ROOT to populate DEVELOPER_DIR for the
+          # child xcrun/install_name_tool processes; setting it avoids the broken symlink
+          # fallback documented in Directory.Build.props.
+          echo "DEVELOPER_DIR=$XC/Contents/Developer" >> "$GITHUB_ENV"
+          echo "MD_APPLE_SDK_ROOT=$XC" >> "$GITHUB_ENV"
+          xcodebuild -version
+
+      - name: Restore workloads
+        run: dotnet workload restore "$PROJECT"
+
+      - name: Build Release (universal)
+        run: |
+          set -euo pipefail
+          # `dotnet build`, NOT `dotnet publish`: publish strips the Blazor static web assets
+          # out of Contents/Resources and the WebView renders blank. See CLAUDE.md gotcha 3.
+          dotnet build "$PROJECT" -c Release -f net10.0-macos \
+            -p:ApplicationDisplayVersion=${{ needs.version.outputs.numeric }} \
+            -p:ApplicationVersion=${{ needs.version.outputs.build }} \
+            -clp:NoSummary -nologo
+
+      - name: Locate and validate the universal bundle
+        id: app
+        run: |
+          set -euo pipefail
+          # The multi-RID Release build emits three .app bundles. Only the one at the TFM root
+          # is the finished universal lipo output; osx-arm64/ and osx-x64/ are incomplete
+          # intermediates (missing web assets, unsigned dylibs). See CLAUDE.md gotcha 3.
+          APP="$(find src/GitHubShine/bin/Release/net10.0-macos -maxdepth 1 -name '*.app' -print -quit)"
+          [[ -n "$APP" ]] || { echo "::error::no .app at the TFM root"; exit 1; }
+          echo "Bundle: $APP"
+
+          WWW="$(find "$APP" -path '*wwwroot*' -type f | wc -l | tr -d ' ')"
+          echo "wwwroot files: $WWW"
+          if [[ "$WWW" -lt 5 ]]; then
+            echo "::error::bundle has only $WWW wwwroot files — this is an incomplete intermediate"
+            exit 1
+          fi
+          lipo -archs "$APP/Contents/MacOS/"* 2>/dev/null || true
+          echo "path=$APP" >> "$GITHUB_OUTPUT"
+
+      - name: Import Developer ID certificate
+        env:
+          MACOS_CERT_P12_B64: ${{ secrets.MACOS_CERT_P12_B64 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          : "${MACOS_CERT_P12_B64:?MACOS_CERT_P12_B64 secret is not set}"
+          KEYCHAIN="$RUNNER_TEMP/build.keychain-db"
+          KEYCHAIN_PW="$(uuidgen)"
+          CERT="$RUNNER_TEMP/cert.p12"
+
+          printf '%s' "$MACOS_CERT_P12_B64" | base64 --decode > "$CERT"
+          security create-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          # Default is a 5-minute auto-lock, which expires mid-build and breaks codesign.
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          security import "$CERT" -k "$KEYCHAIN" -P "$MACOS_CERT_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/security
+          # Without a partition list, codesign raises an interactive "allow access" prompt and
+          # the job hangs until it times out.
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PW" "$KEYCHAIN" >/dev/null
+          security list-keychain -d user -s "$KEYCHAIN" login.keychain-db
+          rm -f "$CERT"
+
+          echo "Available signing identities:"
+          security find-identity -v -p codesigning "$KEYCHAIN"
+
+      - name: Sign, package and notarize
+        env:
+          SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          AC_API_KEY_P8_B64: ${{ secrets.AC_API_KEY_P8_B64 }}
+          AC_API_KEY_ID: ${{ secrets.AC_API_KEY_ID }}
+          AC_API_ISSUER_ID: ${{ secrets.AC_API_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          : "${SIGN_IDENTITY:?MACOS_SIGN_IDENTITY secret is not set}"
+          chmod +x eng/ci/*.sh
+          DMG="artifacts/GitHubShine-${{ needs.version.outputs.version }}-osx-universal.dmg"
+
+          eng/ci/sign-macos-app.sh "${{ steps.app.outputs.path }}" "$SIGN_IDENTITY"
+          eng/ci/make-dmg.sh "${{ steps.app.outputs.path }}" "$DMG" "$SIGN_IDENTITY"
+          eng/ci/notarize.sh "$DMG"
+
+          # Gatekeeper's own verdict on the stapled artifact — the real end-user check.
+          spctl --assess --type open --context context:primary-signature -vv "$DMG"
+
+      - name: Clean up keychain
+        if: always()
+        run: security delete-keychain "$RUNNER_TEMP/build.keychain-db" || true
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: macos
+          path: artifacts/*.dmg
+          if-no-files-found: error
+
+  # =======================================================================================
+  android:
+    name: Android (AAB + APK)
+    needs: version
+    runs-on: ${{ vars.MACOS_RUNNER || 'macos-26' }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: microsoft
+          java-version: '17'
+
+      - uses: actions/cache@v6
+        with:
+          path: ${{ env.NUGET_PACKAGES }}
+          key: nuget-android-${{ hashFiles('Directory.Packages.props', '**/*.csproj') }}
+          restore-keys: nuget-android-
+
+      - name: Restore workloads
+        run: dotnet workload restore "$PROJECT"
+
+      - name: Build and sign
+        env:
+          ANDROID_KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          : "${ANDROID_KEYSTORE_B64:?ANDROID_KEYSTORE_B64 secret is not set}"
+          KS="$RUNNER_TEMP/release.keystore"
+          # trap, not a trailing rm: `set -e` would skip the cleanup on a build failure.
+          trap 'rm -f "$KS"' EXIT
+          printf '%s' "$ANDROID_KEYSTORE_B64" | base64 --decode > "$KS"
+
+          dotnet publish "$PROJECT" -c Release -f net10.0-android \
+            -p:ApplicationDisplayVersion=${{ needs.version.outputs.numeric }} \
+            -p:ApplicationVersion=${{ needs.version.outputs.build }} \
+            -p:AndroidPackageFormats='aab;apk' \
+            -p:AndroidKeyStore=true \
+            -p:AndroidSigningKeyStore="$KS" \
+            -p:AndroidSigningStorePass="$ANDROID_KEYSTORE_PASSWORD" \
+            -p:AndroidSigningKeyAlias="$ANDROID_KEY_ALIAS" \
+            -p:AndroidSigningKeyPass="$ANDROID_KEY_PASSWORD" \
+            -clp:NoSummary -nologo
+
+      - name: Collect artifacts
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          V="${{ needs.version.outputs.version }}"
+          OUT=src/GitHubShine/bin/Release/net10.0-android
+          # The Android SDK emits both an unsigned intermediate and a "-Signed" final package
+          # into the same tree, so always prefer the signed one.
+          AAB="$(find "$OUT" -name '*-Signed.aab' -print -quit)"
+          [[ -n "$AAB" ]] || AAB="$(find "$OUT" -name '*.aab' -print -quit)"
+          APK="$(find "$OUT" -name '*-Signed.apk' -print -quit)"
+          [[ -n "$APK" ]] || APK="$(find "$OUT" -name '*.apk' -print -quit)"
+          [[ -n "$AAB" ]] || { echo "::error::no .aab produced"; exit 1; }
+          [[ -n "$APK" ]] || { echo "::error::no .apk produced"; exit 1; }
+          cp "$AAB" "artifacts/GitHubShine-$V-android.aab"
+          cp "$APK" "artifacts/GitHubShine-$V-android.apk"
+          ls -lh artifacts
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: android
+          path: |
+            artifacts/*.aab
+            artifacts/*.apk
+          if-no-files-found: error
+
+  # =======================================================================================
+  ios:
+    name: iOS (unsigned IPA)
+    needs: version
+    runs-on: ${{ vars.MACOS_RUNNER || 'macos-26' }}
+    # The IPA is unsigned and installable only through third-party sideloading tools, so it is
+    # the lowest-value asset in the release. Never let it block the artifacts people can
+    # actually install — a failure here reports success to the `release` job and simply omits
+    # the asset.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      - uses: actions/cache@v6
+        with:
+          path: ${{ env.NUGET_PACKAGES }}
+          key: nuget-ios-${{ hashFiles('Directory.Packages.props', '**/*.csproj') }}
+          restore-keys: nuget-ios-
+
+      - name: Select newest Xcode
+        run: |
+          set -euo pipefail
+          XC="$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -1)"
+          sudo xcode-select -s "$XC"
+          echo "DEVELOPER_DIR=$XC/Contents/Developer" >> "$GITHUB_ENV"
+          echo "MD_APPLE_SDK_ROOT=$XC" >> "$GITHUB_ENV"
+
+      - name: Restore workloads
+        run: dotnet workload restore "$PROJECT"
+
+      - name: Build unsigned device build
+        run: |
+          set -euo pipefail
+          # EnableCodeSigning=false is the real switch: in Xamarin.Shared.targets it gates both
+          # _DetectSigningIdentity and _CodesignAppBundleCondition, so the build never looks for
+          # a certificate or a provisioning profile. Without it the SDK falls back to automatic
+          # provisioning and picks up whatever identity happens to be in the keychain — which
+          # silently produces a *signed* build locally and simply fails on a bare CI runner.
+          #
+          # Do NOT pass CodesignEntitlements here: a non-empty value re-enables signing on its
+          # own (Xamarin.Shared.targets line ~793 ORs it with EnableCodeSigning).
+          dotnet build "$PROJECT" -c Release -f net10.0-ios \
+            -p:RuntimeIdentifier=ios-arm64 \
+            -p:ApplicationDisplayVersion=${{ needs.version.outputs.numeric }} \
+            -p:ApplicationVersion=${{ needs.version.outputs.build }} \
+            -p:EnableCodeSigning=false \
+            -clp:NoSummary -nologo
+
+      - name: Package IPA
+        run: |
+          set -euo pipefail
+          chmod +x eng/ci/*.sh
+          APP="$(find src/GitHubShine/bin/Release/net10.0-ios -maxdepth 2 -name '*.app' -print -quit)"
+          [[ -n "$APP" ]] || { echo "::error::no iOS .app produced"; exit 1; }
+          eng/ci/make-ipa.sh "$APP" \
+            "artifacts/GitHubShine-${{ needs.version.outputs.version }}-ios-unsigned.ipa"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ios
+          path: artifacts/*.ipa
+          if-no-files-found: error
+
+  # =======================================================================================
+  linux:
+    name: Linux (GTK4 tarball)
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      - uses: actions/cache@v6
+        with:
+          path: ${{ env.NUGET_PACKAGES }}
+          key: nuget-linux-${{ hashFiles('Directory.Packages.props', '**/*.csproj') }}
+          restore-keys: nuget-linux-
+
+      - name: Restore workloads
+        run: dotnet workload restore "$PROJECT"
+
+      - name: Publish self-contained linux-x64
+        run: |
+          set -euo pipefail
+          # Self-contained so users need no .NET 10 runtime; GTK4 and WebKitGTK remain host
+          # dependencies (called out in the README.txt dropped into the tarball).
+          dotnet publish "$PROJECT" -c Release -f net10.0 \
+            -r linux-x64 --self-contained true \
+            -p:ApplicationDisplayVersion=${{ needs.version.outputs.numeric }} \
+            -p:ApplicationVersion=${{ needs.version.outputs.build }} \
+            -o publish \
+            -clp:NoSummary -nologo
+
+      - name: Package tarball
+        run: |
+          set -euo pipefail
+          V="${{ needs.version.outputs.version }}"
+          # Blazor renders into a WebView loaded from these files. A publish that dropped them
+          # yields an app that starts cleanly and shows a blank window — fail loudly instead.
+          WWW="$(find publish/wwwroot -type f 2>/dev/null | wc -l | tr -d ' ')"
+          [[ "$WWW" -ge 5 ]] || { echo "::error::publish output has only $WWW wwwroot files"; exit 1; }
+          [[ -f publish/GitHubShine ]] || { echo "::error::no GitHubShine executable in publish output"; exit 1; }
+          chmod +x publish/GitHubShine
+
+          STAGE="githubshine-$V-linux-x64"
+          mv publish "$STAGE"
+          cat > "$STAGE/README.txt" <<EOF
+          GitHub Shine $V (linux-x64)
+
+          Run:      ./GitHubShine
+
+          Requires GTK4 and WebKitGTK 6.0 on the host:
+            Debian/Ubuntu:  sudo apt install libgtk-4-1 libwebkitgtk-6.0-4
+            Fedora:         sudo dnf install gtk4 webkitgtk6.0
+            Arch:           sudo pacman -S gtk4 webkitgtk-6.0
+
+          The .NET runtime is bundled; no separate .NET install is needed.
+          EOF
+
+          mkdir -p artifacts
+          tar -czf "artifacts/GitHubShine-$V-linux-x64.tar.gz" "$STAGE"
+          ls -lh artifacts
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux
+          path: artifacts/*.tar.gz
+          if-no-files-found: error
+
+  # =======================================================================================
+  windows:
+    name: Windows (zip)
+    needs: version
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      - uses: actions/cache@v6
+        with:
+          path: ${{ env.NUGET_PACKAGES }}
+          key: nuget-windows-${{ hashFiles('Directory.Packages.props', '**/*.csproj') }}
+          restore-keys: nuget-windows-
+
+      - name: Restore workloads
+        shell: pwsh
+        run: dotnet workload restore $env:PROJECT
+
+      - name: Publish self-contained win-x64
+        shell: pwsh
+        run: |
+          dotnet publish $env:PROJECT -c Release -f net10.0-windows10.0.19041.0 `
+            -r win-x64 --self-contained true `
+            -p:ApplicationDisplayVersion=${{ needs.version.outputs.numeric }} `
+            -p:ApplicationVersion=${{ needs.version.outputs.build }} `
+            -p:WindowsPackageType=None `
+            -p:WindowsAppSDKSelfContained=true `
+            -o publish `
+            -clp:NoSummary -nologo
+
+      - name: Package zip
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $v = '${{ needs.version.outputs.version }}'
+          # Same blank-WebView guard as the Linux job.
+          $www = @(Get-ChildItem publish/wwwroot -Recurse -File -ErrorAction SilentlyContinue).Count
+          if ($www -lt 5) { throw "publish output has only $www wwwroot files" }
+          if (-not (Test-Path publish/GitHubShine.exe)) { throw "no GitHubShine.exe in publish output" }
+
+          New-Item -ItemType Directory -Force artifacts | Out-Null
+          # ZipFile rather than Compress-Archive: far faster over the thousands of files a
+          # self-contained WindowsAppSDK publish emits, and it does not choke on long paths.
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          [System.IO.Compression.ZipFile]::CreateFromDirectory(
+            (Resolve-Path publish),
+            (Join-Path (Resolve-Path artifacts) "GitHubShine-$v-win-x64.zip"))
+          Get-ChildItem artifacts
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows
+          path: artifacts/*.zip
+          if-no-files-found: error
+
+  # =======================================================================================
+  release:
+    name: Publish release
+    needs: [ version, macos, android, ios, linux, windows ]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0   # --generate-notes needs the tag history
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: staging
+          merge-multiple: true
+
+      - name: Checksums
+        run: |
+          set -euo pipefail
+          cd staging
+          ls -lh
+          find . -maxdepth 1 -type f ! -name SHA256SUMS.txt -printf '%P\n' \
+            | sort | xargs -r sha256sum > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          V="${{ needs.version.outputs.version }}"
+          TAG="${{ needs.version.outputs.tag }}"
+
+          cat > notes.md <<'NOTES'
+          ## Install
+
+          | Platform | Asset | Notes |
+          |---|---|---|
+          | **macOS 14+** | `*-osx-universal.dmg` | Signed with a Developer ID certificate and notarized by Apple — open the DMG and drag the app to Applications. Universal (Intel + Apple silicon). |
+          | **Windows 10 1809+** | `*-win-x64.zip` | Unpack anywhere and run `GitHubShine.exe`. Self-contained; no .NET install required. SmartScreen may warn on first run — the binary is not signed. |
+          | **Linux x64** | `*-linux-x64.tar.gz` | Unpack and run `./GitHubShine`. Needs GTK4 + WebKitGTK 6.0 on the host; see the bundled `README.txt`. |
+          | **Android 7+** | `*-android.apk` | Sideload directly. The `.aab` alongside it is the Play Store upload bundle and is **not** installable on a device. |
+          | **iOS 15+** | `*-ios-unsigned.ipa` | **Unsigned.** Not installable from this file alone — it has to be re-signed with your own Apple developer account via a sideloading tool. Published for completeness. |
+
+          Verify downloads against `SHA256SUMS.txt`.
+          NOTES
+
+          # Append GitHub's auto-generated changelog. Done through the API rather than
+          # `--generate-notes` because gh's precedence when that flag is combined with
+          # --notes-file is not well defined, and silently losing the install table above
+          # would be worse than losing the changelog.
+          if gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+                -f tag_name="$TAG" -f target_commitish="$GITHUB_SHA" \
+                --jq .body > generated.md 2>/dev/null; then
+            { echo; echo "---"; echo; cat generated.md; } >> notes.md
+          else
+            echo "note: could not generate a changelog (first release?) — publishing without one"
+          fi
+
+          ARGS=()
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.draft }}" == "true" ]]; then
+            ARGS+=(--draft)
+          fi
+          if [[ "$V" == *-* ]]; then
+            ARGS+=(--prerelease)
+          fi
+
+          gh release create "$TAG" \
+            --title "GitHub Shine $V" \
+            --notes-file notes.md \
+            --target "$GITHUB_SHA" \
+            "${ARGS[@]}" \
+            staging/*

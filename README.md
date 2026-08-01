@@ -47,6 +47,20 @@ GitHub Shine is organized into four tabs — **Dashboard**, **Accounts**, **Arch
 | [Platform.Maui.MacOS (maui-labs)](https://www.nuget.org/packages/Platform.Maui.MacOS) | Native macOS (AppKit) MAUI backend + BlazorWebView | <https://www.nuget.org/packages/Platform.Maui.MacOS> |
 | [Platform.Maui.Linux.Gtk4 (maui-labs)](https://www.nuget.org/packages/Platform.Maui.Linux.Gtk4) | Native Linux (GTK4) MAUI backend + BlazorWebView | <https://www.nuget.org/packages/Platform.Maui.Linux.Gtk4> |
 
+## Install
+
+Grab a build from the [latest release](https://github.com/aritchie/githubmon/releases/latest):
+
+| Platform | Asset | Notes |
+|---|---|---|
+| macOS 14+ | `*-osx-universal.dmg` | Signed and notarized by Apple. Open the DMG, drag to Applications. Universal (Intel + Apple silicon). |
+| Windows 10 1809+ | `*-win-x64.zip` | Unpack and run `GitHubShine.exe`. Self-contained — no .NET install needed. |
+| Linux x64 | `*-linux-x64.tar.gz` | Unpack and run `./GitHubShine`. Requires GTK4 + WebKitGTK 6.0 on the host. |
+| Android 7+ | `*-android.apk` | Sideload. The `.aab` is the Play Store upload bundle and is not device-installable. |
+| iOS 15+ | `*-ios-unsigned.ipa` | Unsigned — has to be re-signed with your own Apple account via a sideloading tool. |
+
+Releases are cut by tagging; see [docs/RELEASING.md](docs/RELEASING.md).
+
 ## Getting Started
 
 ### Prerequisites

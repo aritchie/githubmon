@@ -85,6 +85,58 @@ a:hover { text-decoration: underline; }
    horizontal scrollbar on the app shell — pages are meant to fit the width. */
 main { flex: 1; overflow-y: auto; overflow-x: hidden; padding-bottom: env(safe-area-inset-bottom); }
 
+/* ---------- Bottom tab bar (mobile only) ---------- */
+
+/* Rendered instead of the toolbar's nav items on iOS/Android — see MainLayout.
+   The bar is a flex child of #app rather than position:fixed, so it can't overlap
+   the scroller and needs no scroll-padding compensation; `main` keeps flex:1 and
+   simply gets shorter. */
+.tabbar {
+    display: flex;
+    flex: 0 0 auto;
+    background: var(--card);
+    border-top: 1px solid var(--border);
+    /* The inset keeps the row above the home indicator; the row itself stays 54px. */
+    padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* `main` already pads for the home indicator, but with the tab bar below it that
+   inset now belongs to the bar — otherwise the gap is applied twice. */
+main.has-tabbar { padding-bottom: 0; }
+
+.tabbar-item {
+    flex: 1 1 0;
+    /* min-width:0 lets a long label ellipsize instead of forcing the tab wider and
+       pushing the row out of alignment. */
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    height: 54px;
+    padding: 6px 2px;
+    color: var(--fg-muted);
+    text-decoration: none;
+    font-size: 11px;
+    line-height: 1.2;
+    /* Suppress the tap highlight so the press feedback is only our .active colour. */
+    -webkit-tap-highlight-color: transparent;
+}
+
+.tabbar-item:hover { text-decoration: none; }
+.tabbar-item.active { color: var(--link); }
+
+.tabbar-icon { display: block; width: 24px; height: 24px; }
+.tabbar-icon svg { width: 100%; height: 100%; display: block; }
+
+.tabbar-label {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 /* ---------- Page scaffolding ---------- */
 
 .page { padding: 24px; max-width: 1280px; margin: 0 auto; }

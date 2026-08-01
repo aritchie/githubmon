@@ -95,3 +95,24 @@ LaunchServices icon cache is stale from repeated redeploys — fix with `lsregis
 - To capture a startup crash: run the inner binary directly
   (`"<app>/Contents/MacOS/GitHubShine"`) and read stdout; a code-signing kill produces no stdout —
   check the `.ips` crash report instead.
+
+---
+
+## Releasing
+`.github/workflows/release.yml` fires on a `v*` tag and publishes a GitHub release with a
+notarized macOS DMG, a Windows zip, a Linux tarball, an Android AAB+APK and an unsigned iOS IPA.
+Full runbook and the list of required secrets: **`docs/RELEASING.md`**.
+
+Two things about it are load-bearing and easy to break:
+- Because `TargetFrameworks` in the csproj is conditioned on the **build OS**, each head must be
+  built on its own runner — Android and iOS come off the *macOS* runner (a Linux runner only ever
+  sees the plain `net10.0` GTK head), and Windows only sees `net10.0-windows*`.
+- The macOS job uses `dotnet build` and takes the TFM-root bundle, per Gotcha 3. Both the macOS
+  and Linux/Windows jobs assert a minimum `wwwroot` file count, so if a future SDK regresses
+  static-web-asset copying the job fails instead of shipping an app with a blank WebView.
+
+Helper scripts in `eng/ci/` (`sign-macos-app.sh`, `make-dmg.sh`, `notarize.sh`, `make-ipa.sh`)
+are standalone — run the whole macOS signing path locally without CI. `eng/package-macos.sh`
+stays the fast **ad-hoc** local loop and is not part of the release path; the entitlements split
+is `macos-resign.entitlements` (local, ad-hoc) vs `macos-dist.entitlements` (Developer ID,
+hardened runtime, notarized).

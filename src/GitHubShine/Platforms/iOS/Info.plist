@@ -28,5 +28,22 @@
 	</array>
 	<key>XSAppIconAssets</key>
 	<string>Assets.xcassets/appicon.appiconset</string>
+	<!-- Background refresh. Without both of these iOS silently refuses to schedule anything and
+	     Shiny's RequestAccess() reports NotSetup: the app would look fine in the foreground and
+	     simply never poll (or notify) once suspended.
+	     The four identifiers are Shiny.Jobs' own BGTaskScheduler task ids — one per constraint
+	     combination (plain / power / network / power+network) — and are fixed by the library, not
+	     named after this app. -->
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>com.shiny.job</string>
+		<string>com.shiny.jobpower</string>
+		<string>com.shiny.jobnet</string>
+		<string>com.shiny.jobpowernet</string>
+	</array>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>processing</string>
+	</array>
 </dict>
 </plist>

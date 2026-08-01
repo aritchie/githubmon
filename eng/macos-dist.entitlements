@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+    Entitlements for DISTRIBUTION signing — Developer ID Application cert + hardened runtime +
+    notarization (see eng/ci/sign-macos-app.sh, driven by .github/workflows/release.yml).
+
+    Sibling file macos-resign.entitlements is the LOCAL ad-hoc variant; keep the two in sync.
+
+    Why each key is needed:
+      allow-jit / allow-unsigned-executable-memory
+          The .NET runtime JITs. Hardened runtime blocks W+X memory without these.
+      disable-library-validation
+          MonoBundle's dylibs are signed as individual Mach-O files rather than sealed into a
+          framework, and the WKWebView content process loads them; library validation would
+          reject them as "not from the same team".
+
+    Deliberately NOT set:
+      com.apple.security.app-sandbox
+          The app keeps its SQLite document store under ~/Library/Application Support and reads
+          user-chosen files via NSOpenPanel; sandboxing would need a full entitlement audit and
+          is only required for Mac App Store distribution, not for Developer ID + notarization.
+      com.apple.security.get-task-allow
+          Debug-only. Notarization REJECTS any binary carrying it.
+-->
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.cs.allow-jit</key><true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key><true/>
+    <key>com.apple.security.cs.disable-library-validation</key><true/>
+</dict>
+</plist>

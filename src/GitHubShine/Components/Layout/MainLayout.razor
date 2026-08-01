@@ -3,11 +3,17 @@
 @inject AppPlatformInfo Platform
 @inject NavigationManager Nav
 
-<main>
+<main class="@(Platform.IsMobile ? "has-tabbar" : null)">
     @* Nav lives in Items (not EndContent) so ShinyToolbar's auto-overflow kicks in:
        when the links don't fit the bar's width they collapse behind a "More" menu.
        The overflow logic is disabled whenever EndContent is set, so the brand goes
-       in StartContent and the links go through Items. *@
+       in StartContent and the links go through Items.
+
+       On mobile there is nothing to overflow into: even with Archive and Sync hidden,
+       a phone-width bar can only seat one or two labelled items next to the brand, so
+       nearly the whole nav ends up behind "More" — two taps to reach any screen. There
+       the links move to a bottom tab bar instead (see below) and Items is left empty,
+       leaving the top bar as a plain title bar. *@
     <ShinyToolbar Frosted="true"
                   BlurRadius="18"
                   TintColor="var(--toolbar-tint)"
@@ -16,7 +22,7 @@
                   SafeArea="true"
                   Sticky="true"
                   ShowItemLabels="true"
-                  Items="navItems"
+                  Items="toolbarItems"
                   OverflowText="More"
                   OverflowAriaLabel="More navigation"
                   MenuBackgroundColor="var(--card)"
@@ -32,6 +38,24 @@
     @Body
 </main>
 
+@if (Platform.IsMobile)
+{
+    @* Thumb-reachable bottom tabs, the platform-native pattern on iOS and Android.
+       aria-current marks the active tab for screen readers; the visual state is the
+       .active class (both driven by the same NavEntry.Active flag as the toolbar). *@
+    <nav class="tabbar" aria-label="Main">
+        @foreach (var entry in navEntries)
+        {
+            <a class="tabbar-item @(entry.Active ? "active" : null)"
+               href="@entry.Href"
+               aria-current="@(entry.Active ? "page" : null)">
+                <span class="tabbar-icon">@((MarkupString)entry.Icon)</span>
+                <span class="tabbar-label">@entry.ShortText</span>
+            </a>
+        }
+    </nav>
+}
+
 <ToastHost />
 
 @code {
@@ -44,7 +68,13 @@
     const string SyncIcon = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M4 10a8 8 0 0 1 13.7-5.7L20 6'/><path d='M20 3v4h-4'/><path d='M20 14a8 8 0 0 1-13.7 5.7L4 18'/><path d='M4 21v-4h4'/></svg>";
     const string SettingsIcon = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='3'/><path d='M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.09a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.09a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z'/></svg>";
 
-    List<ToolbarItem> navItems = new();
+    // One nav model feeds both presentations: ToolbarItems on desktop, the bottom tab bar
+    // on mobile. ShortText is what the tab bar shows — a tab is roughly a quarter of a
+    // phone's width, and "Repositories" simply doesn't fit at a legible size.
+    sealed record NavEntry(string Icon, string Text, string ShortText, string Href, bool Active);
+
+    List<NavEntry> navEntries = new();
+    List<ToolbarItem> toolbarItems = new();
 
     protected override void OnInitialized()
     {
@@ -65,33 +95,40 @@
     {
         var rel = Nav.ToBaseRelativePath(Nav.Uri).Split('?', '#')[0].Trim('/');
 
-        var items = new List<ToolbarItem>
+        var entries = new List<NavEntry>
         {
-            NavItem(DashboardIcon, "Dashboard", "/", rel.Length == 0),
-            NavItem(ReposIcon, "Repositories", "/repos", IsSection(rel, "repos")),
-            NavItem(AccountsIcon, "Accounts", "/accounts", IsSection(rel, "accounts")),
+            new(DashboardIcon, "Dashboard", "Home", "/", rel.Length == 0),
+            new(ReposIcon, "Repositories", "Repos", "/repos", IsSection(rel, "repos")),
+            new(AccountsIcon, "Accounts", "Accounts", "/accounts", IsSection(rel, "accounts")),
         };
         // Archive isn't usable on phones, and Sync shells out to the git CLI which mobile
-        // doesn't have — hide both nav items there.
+        // doesn't have — hide both nav items there. That also keeps the mobile tab bar at
+        // four tabs, which is what fits comfortably across a phone.
         if (!Platform.IsMobile)
         {
-            items.Add(NavItem(ArchiveIcon, "Archive", "/archive", IsSection(rel, "archive")));
-            items.Add(NavItem(SyncIcon, "Sync", "/sync", IsSection(rel, "sync")));
+            entries.Add(new(ArchiveIcon, "Archive", "Archive", "/archive", IsSection(rel, "archive")));
+            entries.Add(new(SyncIcon, "Sync", "Sync", "/sync", IsSection(rel, "sync")));
         }
-        items.Add(NavItem(SettingsIcon, "Settings", "/settings", IsSection(rel, "settings")));
+        entries.Add(new(SettingsIcon, "Settings", "Settings", "/settings", IsSection(rel, "settings")));
 
-        navItems = items;
+        navEntries = entries;
+
+        // Mobile navigates from the tab bar, so the toolbar gets no items at all — an
+        // empty Items list keeps its overflow measuring from ever producing a "More".
+        toolbarItems = Platform.IsMobile
+            ? new List<ToolbarItem>()
+            : entries.Select(ToToolbarItem).ToList();
     }
 
     static bool IsSection(string rel, string segment)
         => rel == segment || rel.StartsWith(segment + "/", StringComparison.Ordinal);
 
-    static ToolbarItem NavItem(string icon, string text, string href, bool active) => new()
+    static ToolbarItem ToToolbarItem(NavEntry e) => new()
     {
-        Icon = icon,
-        Text = text,
-        Href = href,
-        IconColor = active ? "var(--link)" : null
+        Icon = e.Icon,
+        Text = e.Text,
+        Href = e.Href,
+        IconColor = e.Active ? "var(--link)" : null
     };
 
     public void Dispose() => Nav.LocationChanged -= OnLocationChanged;

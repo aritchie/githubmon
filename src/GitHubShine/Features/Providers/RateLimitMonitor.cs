@@ -24,6 +24,23 @@ public sealed class RateLimitMonitor
         => this.latest = new Snapshot(remaining, limit, reset, DateTimeOffset.UtcNow);
 
     /// <summary>
+    /// When the budget is nearly spent, the moment it refills — otherwise null.
+    ///
+    /// The delay-shaped <see cref="NextDelay"/> below suits a loop that sleeps; a job that is
+    /// invoked by the OS and has to decide "run or skip" right now needs the deadline instead.
+    /// </summary>
+    public DateTimeOffset? DeferUntilUtc()
+    {
+        var snap = this.latest;
+        if (snap is not { Remaining: <= ReserveThreshold, Reset: { } reset })
+            return null;
+
+        // Plus the same small buffer NextDelay uses, so we don't wake a hair before the reset.
+        var until = reset + TimeSpan.FromSeconds(5);
+        return until > DateTimeOffset.UtcNow ? until : null;
+    }
+
+    /// <summary>
     /// How long the poller should wait before its next cycle, given the user's configured interval.
     /// </summary>
     public TimeSpan NextDelay(TimeSpan interval)

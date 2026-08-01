@@ -7,7 +7,10 @@
     bundle must allow loading them (disable-library-validation) and allow the runtime's
     JIT/executable memory. No App Sandbox here — the app reads its SQLite store from
     ~/Library/Application Support and sandbox would block that for an unsigned/ad-hoc build.
-    For real distribution, sign with a Developer ID cert + notarize instead.
+
+    For real distribution the release workflow uses the sibling macos-dist.entitlements with a
+    Developer ID cert + hardened runtime + notarization — see docs/RELEASING.md. The two files
+    carry the same keys; keep them in sync.
 -->
 <plist version="1.0">
 <dict>

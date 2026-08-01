@@ -15,7 +15,12 @@ public sealed record AutoSyncPrefs(
     // the type, so they can't see its own constants.
     int IntervalHours = 3,
     bool SyncAll = false,
-    DateTimeOffset? LastRunUtc = null)
+    DateTimeOffset? LastRunUtc = null,
+    // Persisted rather than in-memory because the pass now runs as a job: the process that
+    // recorded a durable failure (git missing, no accounts) is usually gone by the next
+    // invocation, and an in-memory back-off would be forgotten every time — turning "check back
+    // in an hour" into "retry on every single job tick".
+    DateTimeOffset? RetryAfterUtc = null)
 {
     public const string DefaultId = "default";
 

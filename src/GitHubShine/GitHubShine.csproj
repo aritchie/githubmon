@@ -75,6 +75,11 @@
 		<PackageReference Include="Microsoft.Extensions.Logging.Console" />
 		<PackageReference Include="Shiny.Mediator.Maui" />
 		<PackageReference Include="Shiny.Notifications" />
+		<!-- Background scheduling. On iOS/Android this binds the native schedulers
+		     (BGTaskScheduler / WorkManager); the desktop heads have no net10.0-macos or
+		     net10.0-windows asset and fall back to lib/net10.0, which is Shiny's in-process
+		     timer-driven JobManager — the same thing the hand-rolled loops used to be. -->
+		<PackageReference Include="Shiny.Jobs" />
 		<PackageReference Include="Shiny.Blazor.Controls" />
 		<PackageReference Include="Shiny.DocumentDb.Sqlite" />
 		<PackageReference Include="Shiny.Extensions.Stores" />
@@ -89,17 +94,27 @@
 
 	<!-- MAUI DevFlow: the CLI's in-app agent, plus the Blazor tools that expose the WebView over
 	     CDP (this app's UI is entirely Blazor, so without the second package the tree stops at the
-	     WebView). Registration is #if DEBUG in MauiProgram; the references stay unconditional so
-	     restore doesn't have to differ per configuration.
+	     WebView).
 	     The base packages ship android/ios/maccatalyst/macos/windows assets — including
 	     net10.0-macos, so the labs AppKit head is covered — while the GTK4 Linux head (plain
-	     net10.0) needs the .Gtk pair instead. -->
-	<ItemGroup Condition="'$(_IsLinux)' != 'true'">
+	     net10.0) needs the .Gtk pair instead.
+
+	     DEBUG-ONLY. Every call site is inside #if DEBUG (MauiProgram registration and, for the
+	     GTK head, App.OnStart), so in Release the assemblies were pure dead weight shipped to
+	     users — and the agent opens a local HTTP server, which is not something a distributed
+	     build should carry at all. $(Configuration) == 'Debug' is the same switch the SDK uses
+	     to define the DEBUG symbol, so the references track the #if exactly; if a custom
+	     configuration ever defines DEBUG, update this condition to match.
+
+	     Cost of the split: obj/project.assets.json is per-project, not per-configuration, so
+	     alternating `build -c Debug` and `build -c Release` re-restores each time. That is a few
+	     seconds from the local NuGet cache, and CI only ever builds Release. -->
+	<ItemGroup Condition="'$(Configuration)' == 'Debug' AND '$(_IsLinux)' != 'true'">
 		<PackageReference Include="Microsoft.Maui.DevFlow.Agent" />
 		<PackageReference Include="Microsoft.Maui.DevFlow.Blazor" />
 	</ItemGroup>
 
-	<ItemGroup Condition="'$(_IsLinux)' == 'true'">
+	<ItemGroup Condition="'$(Configuration)' == 'Debug' AND '$(_IsLinux)' == 'true'">
 		<PackageReference Include="Microsoft.Maui.DevFlow.Agent.Gtk" />
 		<PackageReference Include="Microsoft.Maui.DevFlow.Blazor.Gtk" />
 	</ItemGroup>
@@ -115,6 +130,9 @@
 		<PackageReference Include="Microsoft.Maui.Platforms.Linux.Gtk4.Essentials" />
 		<PackageReference Include="Microsoft.Maui.Platforms.Linux.Gtk4.BlazorWebView" />
 		<PackageReference Include="Shiny.Notifications.Linux" />
+		<!-- IBattery/IConnectivity for the job manager: Shiny.Core's plain net10.0 asset ships
+		     only the interfaces, so the GTK head needs the Linux implementations. -->
+		<PackageReference Include="Shiny.Core.Linux" />
 	</ItemGroup>
 
 	<PropertyGroup Condition="'$(_IsLinux)' == 'true'">

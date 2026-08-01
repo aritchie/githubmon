@@ -4,6 +4,8 @@ global using GitHubShine.Accounts;
 global using GitHubShine.Archive;
 global using GitHubShine.Dashboard;
 global using GitHubShine.Dashboard.Mediator;
+global using GitHubShine.Dashboard.Jobs;
+global using GitHubShine.Jobs;
 global using GitHubShine.Notifications;
 global using GitHubShine.Providers;
 global using GitHubShine.Settings;

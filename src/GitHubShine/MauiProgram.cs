@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using Shiny;
 using Shiny.Blazor.Controls.Toast;
 using Shiny.DocumentDb;
+using Shiny.Jobs;
 using Shiny.DocumentDb.Sqlite;
 using Shiny.Mediator;
 #if MOBILE
@@ -139,6 +140,7 @@ public static class MauiProgram
             options.MapTypeToTable<NotificationPrefs>();
             options.MapTypeToTable<SyncMapping>();
             options.MapTypeToTable<AutoSyncPrefs>();
+            options.MapTypeToTable<PollState>();
         });
 
         // [Singleton]-attributed services (ConfigStore, SecureTokenVault,
@@ -148,12 +150,53 @@ public static class MauiProgram
 #if !MOBILE
         // System-tray / menu-bar host is desktop-only (Shiny.Maui.Controls.Desktop).
         builder.Services.AddSingletonAsImplementedInterfaces<TrayIconHost>();
-
-        // Background sync, desktop-only for the same reason the Sync nav item is: it shells out
-        // to the git CLI, which mobile doesn't have.
-        builder.Services.AddSingletonAsImplementedInterfaces<AutoSyncRunner>();
 #endif
-        builder.Services.AddSingletonAsImplementedInterfaces<PollerInitializer>();
+
+        // JobManager constructor-injects IBattery and IConnectivity (it evaluates the
+        // WithInternet/WithBatteryNotLow constraints before each run). On iOS/Android the
+        // platform-specific Shiny.Jobs build registers them itself, but the desktop heads resolve
+        // Shiny.Jobs' plain net10.0 fallback, which compiles against Shiny.Core's net10.0 asset —
+        // and that asset declares only the interfaces, so its AddJob has no implementations to
+        // wire up. Register them per-head, exactly as with Shiny.IPlatform above.
+        // Symptom when missing: "Unable to resolve service for type 'Shiny.Power.IBattery' while
+        // attempting to activate 'Shiny.Jobs.JobManager'" at startup.
+#if MACOS || WINDOWS || LINUX
+        builder.Services.AddBattery();
+        builder.Services.AddConnectivity();
+#endif
+
+        // Background work runs as Shiny jobs rather than hand-rolled Task.Run loops. The reason is
+        // mobile: a loop only lives as long as the process, so once iOS suspended the app polling
+        // stopped and every notification with it, with no way back. AddJob binds the native
+        // schedulers on iOS/Android (BGTaskScheduler / WorkManager) and Shiny's in-process
+        // JobManager on the desktop heads.
+        //
+        // WithForeground keeps them running while the app is open too (the JobLifecycleTask
+        // driver, ~1min), which is what replaces the old loops' foreground behaviour. Note this is
+        // NOT an Android foreground service — it just means "also run while foregrounded".
+        //
+        // Both jobs are invoked far more often than they should do work and gate themselves on a
+        // stored timestamp: IPollSchedule for the refresh, AutoSyncPrefs.LastRunUtc for the sync.
+        builder.Services.AddJob<RepoPollJob>(r => r
+            .WithForeground()
+            .WithInternet(InternetAccess.Any)
+        );
+
+#if !MOBILE
+        // Auto-sync stays desktop-only for the same reason the Sync nav item is: it shells out to
+        // the git CLI, which mobile doesn't have.
+        builder.Services.AddJob<AutoSyncJob>(r => r
+            .WithForeground()
+            .WithInternet(InternetAccess.Any)
+        );
+#endif
+
+        // Constructs and starts the job manager — nothing else resolves IJobManager, and DI is
+        // lazy, so without this the jobs above are registered but never invoked.
+        builder.Services.AddSingletonAsImplementedInterfaces<JobStartupService>();
+
+        // Startup paint + refresh-on-config-change; the periodic refresh is RepoPollJob's.
+        builder.Services.AddSingletonAsImplementedInterfaces<PollStartupService>();
         builder.Services.AddSingletonAsImplementedInterfaces<NotificationAccessInitializer>();
         builder.Services.AddSingletonAsImplementedInterfaces<NotificationPrefsInitializer>();
 

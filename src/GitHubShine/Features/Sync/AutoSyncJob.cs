@@ -1,20 +1,22 @@
+using Shiny.Jobs;
 using Shiny.Notifications;
 
 namespace GitHubShine.Sync;
 
 /// <summary>
-/// Runs the configured syncs in the background on a long interval (3 hours and up — see
-/// <see cref="AutoSyncPrefs"/>).
+/// Runs the configured git mirrors in the background — one pass of what <c>AutoSyncRunner</c>
+/// used to loop.
 ///
-/// Timing is anchored to <see cref="AutoSyncPrefs.LastRunUtc"/> in the database rather than to
-/// process uptime, so an app that gets opened and closed several times a day still syncs on its
-/// schedule instead of either firing on every launch or never firing at all.
+/// Timing was already anchored to <see cref="AutoSyncPrefs.LastRunUtc"/> in the database rather
+/// than to process uptime, so the move from a loop to a job barely changes it: the job is invoked
+/// on the platform's cadence and this pass decides whether one is actually due. What did have to
+/// change is the retry back-off, which used to be a field — see
+/// <see cref="AutoSyncPrefs.RetryAfterUtc"/>.
 ///
-/// Modelled on <c>PollerInitializer</c>: an <see cref="IMauiInitializeService"/> owning one loop
-/// task, woken early when the settings change. Desktop-only — sync shells out to the git CLI,
-/// which mobile doesn't have — so it's registered under <c>!MOBILE</c> in MauiProgram.
+/// Still desktop-only: a sync shells out to the git CLI, which mobile doesn't have. It's
+/// registered under <c>!MOBILE</c> in MauiProgram, so on a phone this job doesn't exist.
 /// </summary>
-public sealed class AutoSyncRunner(
+public sealed class AutoSyncJob(
     IConfigStore config,
     ISyncStore syncStore,
     IRepoSyncEngine engine,
@@ -24,102 +26,61 @@ public sealed class AutoSyncRunner(
     SyncGate gate,
     INotificationHub notifications,
     INotificationPrefsStore notifyPrefs,
-    ILogger<AutoSyncRunner> logger) : IMauiInitializeService, IDisposable
+    ILogger<AutoSyncJob> logger) : IJob
 {
-    /// <summary>Long enough after launch for the poller to have filled the snapshot cache with
-    /// the push times the "behind" check reads, so the first pass rarely needs its own requests.</summary>
-    static readonly TimeSpan StartupSettle = TimeSpan.FromMinutes(2);
-
     /// <summary>Something transient stopped a due pass (the user was mid-run) — try again soon.</summary>
     static readonly TimeSpan ShortRetry = TimeSpan.FromMinutes(10);
 
     /// <summary>Something durable stopped it (no git, no accounts) — don't spin on it.</summary>
     static readonly TimeSpan LongRetry = TimeSpan.FromHours(1);
 
-    /// <summary>Fallback re-check while auto-sync is switched off; the wake signal normally beats it.</summary>
-    static readonly TimeSpan DisabledIdle = TimeSpan.FromHours(1);
-
-    CancellationTokenSource? cts;
-    Task? loop;
-    DateTimeOffset? retryAfterUtc;
-    volatile TaskCompletionSource wakeSignal = NewSignal();
     static int notificationIdSeed = 2000;
 
-    static TaskCompletionSource NewSignal()
-        => new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-    public void Initialize(IServiceProvider services)
+    public async Task Run(CancellationToken cancelToken)
     {
-        this.cts = new CancellationTokenSource();
-        this.loop = Task.Run(() => this.RunAsync(this.cts.Token));
-    }
+        var prefs = await syncStore.GetAutoSyncAsync(cancelToken).ConfigureAwait(false);
 
-    // Interval changed, or auto-sync was switched on — re-time without waiting out the sleep
-    // that was already in flight (which could be hours).
-    void OnAutoSyncChanged(object? sender, EventArgs e)
-        => this.wakeSignal.TrySetResult();
-
-    async Task RunAsync(CancellationToken ct)
-    {
-        syncStore.AutoSyncChanged += this.OnAutoSyncChanged;
-
-        try { await Task.Delay(StartupSettle, ct).ConfigureAwait(false); }
-        catch (OperationCanceledException) { return; }
-
-        while (!ct.IsCancellationRequested)
+        if (!prefs.Enabled)
         {
-            // Arm the wake signal BEFORE reading the settings, so a change that lands while this
-            // pass is running still shortens the sleep that follows it.
-            this.wakeSignal = NewSignal();
-            var wake = this.wakeSignal.Task;
+            logger.LogDebug("[AutoSync] skipped — disabled");
+            return;
+        }
 
-            AutoSyncPrefs prefs;
-            try
-            {
-                prefs = await syncStore.GetAutoSyncAsync(ct).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) { break; }
-            catch (Exception ex)
-            {
-                logger.LogWarning(ex, "[AutoSync] couldn't read the auto-sync settings");
-                prefs = AutoSyncPrefs.Default with { Enabled = false };
-            }
+        var now = DateTimeOffset.UtcNow;
 
-            var wait = this.NextDelay(prefs);
-            if (wait > TimeSpan.Zero)
-            {
-                try { await Task.WhenAny(Task.Delay(wait, ct), wake).ConfigureAwait(false); }
-                catch (OperationCanceledException) { break; }
-                continue;
-            }
+        if (prefs.RetryAfterUtc is { } retryAt && retryAt > now)
+        {
+            logger.LogDebug("[AutoSync] skipped — backing off until {At:u}", retryAt);
+            return;
+        }
 
-            try
+        if (prefs.LastRunUtc is { } last)
+        {
+            var elapsed = now - last;
+            // Negative means the clock moved backwards; treat it as due rather than wedging.
+            if (elapsed >= TimeSpan.Zero && elapsed < prefs.Interval)
             {
-                await this.RunPassAsync(prefs, ct).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) { break; }
-            catch (Exception ex)
-            {
-                // Never let one bad pass end the loop — back off and try again later.
-                logger.LogError(ex, "[AutoSync] pass failed");
-                this.retryAfterUtc = DateTimeOffset.UtcNow + LongRetry;
+                logger.LogDebug(
+                    "[AutoSync] skipped — last run {Hours:F1}h ago, interval {Interval:F0}h",
+                    elapsed.TotalHours, prefs.Interval.TotalHours);
+                return;
             }
         }
 
-        syncStore.AutoSyncChanged -= this.OnAutoSyncChanged;
-    }
-
-    /// <summary>How long until the next pass is due — zero when it's due now.</summary>
-    TimeSpan NextDelay(AutoSyncPrefs prefs)
-    {
-        if (!prefs.Enabled)
-            return DisabledIdle;
-
-        var now = DateTimeOffset.UtcNow;
-        var due = prefs.LastRunUtc is { } last ? last + prefs.Interval - now : TimeSpan.Zero;
-        var retry = this.retryAfterUtc is { } at ? at - now : TimeSpan.Zero;
-        var wait = due > retry ? due : retry;
-        return wait > TimeSpan.Zero ? wait : TimeSpan.Zero;
+        try
+        {
+            await this.RunPassAsync(prefs, cancelToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // Never let one bad pass poison the schedule — back off and try again later.
+            logger.LogError(ex, "[AutoSync] pass failed");
+            await this.SetRetryAsync(LongRetry, cancelToken).ConfigureAwait(false);
+        }
     }
 
     async Task RunPassAsync(AutoSyncPrefs prefs, CancellationToken ct)
@@ -132,7 +93,7 @@ public sealed class AutoSyncRunner(
         {
             // Installing git isn't going to happen in the next few minutes — check back in an hour.
             logger.LogWarning("[AutoSync] skipped — {Message}", ex.Message);
-            this.retryAfterUtc = DateTimeOffset.UtcNow + LongRetry;
+            await this.SetRetryAsync(LongRetry, ct).ConfigureAwait(false);
             return;
         }
 
@@ -168,7 +129,7 @@ public sealed class AutoSyncRunner(
         if (lease is null)
         {
             logger.LogDebug("[AutoSync] a sync is already running — retrying in {Minutes}m", ShortRetry.TotalMinutes);
-            this.retryAfterUtc = DateTimeOffset.UtcNow + ShortRetry;
+            await this.SetRetryAsync(ShortRetry, ct).ConfigureAwait(false);
             return;
         }
 
@@ -271,17 +232,36 @@ public sealed class AutoSyncRunner(
 
     async Task CompletePassAsync(CancellationToken ct)
     {
-        this.retryAfterUtc = null;
         try
         {
             await syncStore.MarkAutoSyncRunAsync(DateTimeOffset.UtcNow, ct).ConfigureAwait(false);
+            await this.SetRetryAsync(null, ct).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
-            // Bookkeeping only — but without it the loop would think a pass is still due, so back
-            // off explicitly rather than re-running immediately.
+            // Bookkeeping only — but without it the next invocation would think a pass is still
+            // due, so back off explicitly rather than re-running immediately.
             logger.LogWarning(ex, "[AutoSync] couldn't record the run time");
-            this.retryAfterUtc = DateTimeOffset.UtcNow + LongRetry;
+            await this.SetRetryAsync(LongRetry, ct).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>Persists (or clears) the back-off deadline.</summary>
+    async Task SetRetryAsync(TimeSpan? delay, CancellationToken ct)
+    {
+        try
+        {
+            // Re-read rather than reusing the pass's copy: MarkAutoSyncRunAsync may have written
+            // LastRunUtc in between, and this must not roll that back.
+            var current = await syncStore.GetAutoSyncAsync(ct).ConfigureAwait(false);
+            var at = delay is { } d ? DateTimeOffset.UtcNow + d : (DateTimeOffset?)null;
+            await syncStore
+                .SaveAutoSyncAsync(current with { RetryAfterUtc = at }, ct)
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "[AutoSync] couldn't record the retry deadline");
         }
     }
 
@@ -316,12 +296,5 @@ public sealed class AutoSyncRunner(
         {
             logger.LogDebug(ex, "[AutoSync] couldn't post the failure notification");
         }
-    }
-
-    public void Dispose()
-    {
-        syncStore.AutoSyncChanged -= this.OnAutoSyncChanged;
-        this.cts?.Cancel();
-        this.cts?.Dispose();
     }
 }
