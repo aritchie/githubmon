@@ -95,9 +95,9 @@
                             {
                                 <Pill Text="Not visible to token" Type="PillType.Warning" />
                             }
-                            else if (row.Private)
+                            else
                             {
-                                <Pill Text="Private" Type="PillType.Info" />
+                                <VisibilityPill IsPrivate="row.Private" />
                             }
                         </span>
                     </label>
@@ -135,7 +135,13 @@
         public string FullName => $"{this.Owner}/{this.Name}";
         public string Key => $"{this.AccountId}|{this.FullName}";
         public string? Description { get; set; }
-        public bool Private { get; set; }
+
+        /// <summary>
+        /// Null until the token's repo listing lands — rows are seeded from the saved config,
+        /// which knows only owner/name, and a default of false would flash "Public" on a repo
+        /// that turns out to be private.
+        /// </summary>
+        public bool? Private { get; set; }
 
         /// <summary>False for a monitored repo the account's token can no longer see.</summary>
         public bool VisibleToToken { get; set; } = true;

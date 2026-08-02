@@ -16,5 +16,6 @@ namespace GitHubShine;
 [JsonSerializable(typeof(PullRequestSummary))]
 [JsonSerializable(typeof(WorkflowRunSummary))]
 [JsonSerializable(typeof(MonitoredRepo))]
+[JsonSerializable(typeof(PersonSnapshot))]
 [JsonSerializable(typeof(ConcurrentDictionary<string, ConcurrentDictionary<string, string>>))]
 internal sealed partial class GitHubShineCacheJsonContext : JsonSerializerContext;

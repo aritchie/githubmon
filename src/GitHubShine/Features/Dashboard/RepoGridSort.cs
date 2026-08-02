@@ -21,6 +21,7 @@ public sealed record RepoGridSort(string ColumnId, bool Descending)
         {
             RepoGridColumns.Repository => this.By(cards, c => c.Title, StringComparer.OrdinalIgnoreCase),
             RepoGridColumns.Account => this.By(cards, c => c.AccountLabel, StringComparer.OrdinalIgnoreCase),
+            RepoGridColumns.Visibility => this.By(cards, c => c.VisibilityRank),
             RepoGridColumns.Forks => this.By(cards, c => c.Forks),
             RepoGridColumns.Watchers => this.By(cards, c => c.Watchers),
             RepoGridColumns.OpenIssues => this.By(cards, c => c.OpenIssues),
@@ -51,6 +52,7 @@ public static class RepoGridColumns
 {
     public const string Repository = nameof(RepoCardModel.Title);
     public const string Account = nameof(RepoCardModel.AccountLabel);
+    public const string Visibility = nameof(RepoCardModel.VisibilityRank);
     public const string Stars = nameof(RepoCardModel.Stars);
     public const string Forks = nameof(RepoCardModel.Forks);
     public const string Watchers = nameof(RepoCardModel.Watchers);
@@ -60,13 +62,14 @@ public static class RepoGridColumns
 
     /// <summary>Guards a persisted id against a column that no longer exists.</summary>
     public static bool IsKnown(string columnId) => columnId is
-        Repository or Account or Stars or Forks or Watchers or OpenIssues or OpenPullRequests or Build;
+        Repository or Account or Visibility or Stars or Forks or Watchers or OpenIssues or OpenPullRequests or Build;
 
     /// <summary>The column's header text — also how the sort is described outside the grid.</summary>
     public static string Label(string columnId) => columnId switch
     {
         Repository => "Repository",
         Account => "Account",
+        Visibility => "Visibility",
         Forks => "Forks",
         Watchers => "Watchers",
         OpenIssues => "Open issues",

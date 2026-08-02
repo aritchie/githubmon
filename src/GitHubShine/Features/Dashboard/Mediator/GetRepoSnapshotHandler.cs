@@ -38,6 +38,7 @@ public sealed partial class GetRepoSnapshotHandler(IGitProviderFactory factory, 
             data.OpenPullRequests,
             data.RecentWorkflowRuns,
             null,
-            data.Stats.PushedAt);
+            data.Stats.PushedAt,
+            data.Stats.Private);
     }
 }

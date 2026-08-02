@@ -1,0 +1,21 @@
+@*
+    A repo's public/private badge, shared by every screen that lists repos so the wording and
+    the colour stay identical across them. Colour carries the state as much as the text does:
+    private is the amber caution pill, public the neutral grey one. Neither is success/critical —
+    visibility is a fact about the repo, not a good or bad outcome.
+*@
+
+@if (IsPrivate is { } isPrivate)
+{
+    <Pill Text="@(isPrivate ? "Private" : "Public")"
+          Type="@(isPrivate ? PillType.Caution : PillType.None)" />
+}
+
+@code {
+    /// <summary>
+    /// The repo's visibility. Null means "not known yet" — on the dashboard and the repositories
+    /// grid that is any repo whose first snapshot hasn't landed — and renders nothing at all
+    /// rather than defaulting to "Public" and being wrong about a private repo.
+    /// </summary>
+    [Parameter] public bool? IsPrivate { get; set; }
+}

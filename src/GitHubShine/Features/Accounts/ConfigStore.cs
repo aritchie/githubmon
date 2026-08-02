@@ -73,6 +73,26 @@ public sealed class ConfigStore(
         PreferencesChanged?.Invoke(this, EventArgs.Empty);
     }
 
+    public async Task<PersonGridSort> GetPersonGridSortAsync()
+    {
+        var doc = await LoadDashboardPrefsAsync().ConfigureAwait(false);
+        // IsKnown guards a stored id whose column has since been renamed or dropped.
+        return doc.PersonSortColumnId is { Length: > 0 } id && PersonGridColumns.IsKnown(id)
+            ? new PersonGridSort(id, doc.PersonSortDescending ?? true)
+            : PersonGridSort.Default;
+    }
+
+    public async Task SetPersonGridSortAsync(PersonGridSort sort)
+    {
+        var current = await LoadDashboardPrefsAsync().ConfigureAwait(false);
+        await SaveDashboardPrefsAsync(current with
+        {
+            PersonSortColumnId = sort.ColumnId,
+            PersonSortDescending = sort.Descending
+        }).ConfigureAwait(false);
+        PreferencesChanged?.Invoke(this, EventArgs.Empty);
+    }
+
     public async Task<IReadOnlyList<string>> GetRepoOrderAsync()
         => (await LoadDashboardPrefsAsync().ConfigureAwait(false)).RepoOrder;
 

@@ -2,6 +2,7 @@
 @implements IDisposable
 @inject IConfigStore Config
 @inject ISyncStore SyncStore
+@inject IPersonStore Persons
 @inject NavigationManager Nav
 @inject IToastService Toast
 
@@ -95,10 +96,17 @@
         // Nothing can sync from — or to — an account that's gone.
         var pruned = await SyncStore.PruneForRemovedAccountAsync(account.Id);
 
-        var syncNote = pruned.Count == 0
-            ? ""
-            : $" and {pruned.Count} sync{(pruned.Count == 1 ? "" : "s")}";
-        await Toast.SuccessAsync($"Removed {account.Label}{syncNote}");
+        // Likewise the people it followed: without its token there's nothing left to read them with.
+        var unfollowed = await Persons.PruneForRemovedAccountAsync(account.Id);
+
+        var notes = new List<string>();
+        if (pruned.Count > 0)
+            notes.Add($"{pruned.Count} sync{(pruned.Count == 1 ? "" : "s")}");
+        if (unfollowed.Count > 0)
+            notes.Add($"{unfollowed.Count} followed {(unfollowed.Count == 1 ? "person" : "people")}");
+
+        var note = notes.Count == 0 ? "" : $" and {string.Join(" and ", notes)}";
+        await Toast.SuccessAsync($"Removed {account.Label}{note}");
     }
 
     public void Dispose()

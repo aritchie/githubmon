@@ -107,6 +107,20 @@ public sealed class RefreshAllHandler(IConfigStore config, SnapshotCache cache, 
                 logger.LogWarning(ex, "Inbox refresh failed for {Account}", account.Label);
             }
         }
+
+        // Followed people ride the same cycle: every caller of RefreshAllCommand — the poll job,
+        // the cold-start paint, the tray, the page refresh buttons — means "bring everything up to
+        // date", and hanging this off the one command keeps that true without teaching each caller
+        // about a second one. Its own failures are contained by RefreshPersonsHandler, so a person
+        // that can't be read never takes the repo refresh down with it.
+        try
+        {
+            await context.Send(new RefreshPersonsCommand(force), cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "People refresh failed");
+        }
     }
 
     static string Key(string accountId, MonitoredRepo repo) => $"{accountId}|{repo.FullName}";

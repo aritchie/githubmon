@@ -15,11 +15,18 @@ namespace GitHubShine.Accounts;
 /// Nullable rather than defaulted so a row written before these fields existed
 /// deserializes cleanly.
 /// </param>
+/// <param name="PersonSortColumnId">
+/// As <paramref name="SortColumnId"/>, for the people grid. A separate pair rather than a shared
+/// one because the two grids have disjoint column sets — a sort restored from the other grid
+/// could only ever fall back to its default.
+/// </param>
 public sealed record DashboardPrefs(
     string Id,
     List<string> RepoOrder,
     string? SortColumnId = null,
-    bool? SortDescending = null
+    bool? SortDescending = null,
+    string? PersonSortColumnId = null,
+    bool? PersonSortDescending = null
 )
 {
     public const string DefaultId = "default";

@@ -18,6 +18,9 @@ public sealed class GitHubProvider(
 {
     static readonly ProductHeaderValue Product = new("GitHubShine", "1.0");
 
+    /// <summary>GitHub's maximum items per page — the fewest round-trips per capped listing.</summary>
+    const int PageSize = 100;
+
     readonly GitHubClient client = BuildClient(hostUrl, token, rateLimits, etagLogger);
 
     /// <summary>
@@ -61,7 +64,8 @@ public sealed class GitHubProvider(
             r.StargazersCount,
             r.ForksCount,
             r.SubscribersCount,
-            r.PushedAt);
+            r.PushedAt,
+            r.Private);
 
         var prSummaries = prs
             .Select(p => new PullRequestSummary(
@@ -136,6 +140,138 @@ public sealed class GitHubProvider(
             .Select(r => new AccessibleRepo(r.Owner.Login, r.Name, r.Description, r.Private))
             .ToArray();
     }
+
+    public async Task<GitPersonProfile?> GetPersonAsync(string login, CancellationToken ct = default)
+    {
+        try
+        {
+            // /users/{login} answers for organisations too (with type=Organization), so one
+            // endpoint covers both kinds — no "try org, fall back to user" dance needed here.
+            return ToProfile(await client.User.Get(login).ConfigureAwait(false));
+        }
+        catch (NotFoundException)
+        {
+            return null;
+        }
+    }
+
+    public async Task<GitPersonSnapshotData?> GetPersonSnapshotAsync(string login, GitPersonKind kind, CancellationToken ct = default)
+    {
+        var profile = await GetPersonAsync(login, ct).ConfigureAwait(false);
+        if (profile is null)
+            return null;
+
+        // Fan out: the star sum and the member count are independent, and the member count is
+        // skipped entirely for a person. Trust the profile's Kind over the caller's stored one —
+        // a login can change hands between a user and an org after it was followed.
+        var starsTask = SumStarsAsync(login, profile.Kind);
+        var membersTask = profile.Kind == GitPersonKind.Organization
+            ? CountMembersAsync(login)
+            : Task.FromResult<PagedTally?>(null);
+        await Task.WhenAll(starsTask, membersTask).ConfigureAwait(false);
+
+        var stars = starsTask.Result;
+        var members = membersTask.Result;
+
+        return new GitPersonSnapshotData(
+            profile,
+            stars.Total,
+            members?.Total,
+            stars.Truncated,
+            members?.Truncated ?? false);
+    }
+
+    /// <summary>
+    /// Sums stargazers across the login's repos. GitHub publishes no aggregate star count, so
+    /// this is the only way to get one — a paged listing, capped, and cheap in steady state
+    /// because the pages come back as ETag 304s while nothing changes.
+    /// </summary>
+    Task<PagedTally> SumStarsAsync(string login, GitPersonKind kind)
+        => PageAsync(
+            GitPersonLimits.MaxRepos,
+            page => kind == GitPersonKind.Organization
+                ? client.Repository.GetAllForOrg(login, page)
+                : client.Repository.GetAllForUser(login, page),
+            repos => repos.Sum(r => r.StargazersCount));
+
+    async Task<PagedTally?> CountMembersAsync(string login)
+    {
+        try
+        {
+            return await PageAsync(
+                GitPersonLimits.MaxMembers,
+                page => client.Organization.Member.GetAll(login, page),
+                members => members.Count).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is NotFoundException or ForbiddenException)
+        {
+            // A fine-grained token without org-members read gets 403, and a private membership
+            // list reads as 404. Neither means "no members", so report "unknown" instead of 0.
+            return null;
+        }
+    }
+
+    /// <summary>A tally over a capped listing, and whether the cap cut it short.</summary>
+    readonly record struct PagedTally(int Total, bool Truncated);
+
+    /// <summary>
+    /// Walks a listing one explicitly-numbered page at a time, accumulating
+    /// <paramref name="tally"/> over each page and stopping on the first short page or once
+    /// <paramref name="maxItems"/> has been read.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately NOT <c>ApiOptions.PageCount</c>, which is how Octokit is normally asked to
+    /// fetch several pages. That relies on following the <c>Link</c> response header, and this app's
+    /// Apple heads never see it — the platform's native HTTP handler drops <c>Link</c> before it
+    /// reaches managed code, so Octokit concludes there is no next page and silently returns only
+    /// the first 100 items. Asking for each page by number needs no header at all, so the count
+    /// comes out the same on every head.
+    /// </remarks>
+    async Task<PagedTally> PageAsync<T>(
+        int maxItems,
+        Func<ApiOptions, Task<IReadOnlyList<T>>> fetchPage,
+        Func<IReadOnlyList<T>, int> tally)
+    {
+        var total = 0;
+        var pages = maxItems / PageSize;
+
+        for (var page = 1; page <= pages; page++)
+        {
+            var batch = await fetchPage(new ApiOptions
+            {
+                PageSize = PageSize,
+                PageCount = 1,
+                StartPage = page
+            }).ConfigureAwait(false);
+
+            total += tally(batch);
+
+            if (batch.Count < PageSize)
+                return new PagedTally(total, false); // ran out before the cap — a complete tally
+        }
+
+        // Every page came back full, so the cap — not the data — is what stopped us.
+        return new PagedTally(total, true);
+    }
+
+    static GitPersonProfile ToProfile(User u) => new(
+        u.Login,
+        // StringValue rather than the parsed enum: Octokit throws when GitHub introduces an
+        // account type it doesn't know, and an unrecognised type is simply "not an org".
+        string.Equals(u.Type?.ToString(), "Organization", StringComparison.OrdinalIgnoreCase)
+            ? GitPersonKind.Organization
+            : GitPersonKind.User,
+        u.Name,
+        u.AvatarUrl,
+        u.Bio,
+        u.Location,
+        u.Company,
+        u.Blog,
+        u.Followers,
+        u.Following,
+        u.PublicRepos,
+        u.PublicGists,
+        u.CreatedAt);
 
     public async Task<GitRepoInfo?> GetRepoInfoAsync(MonitoredRepo repo, CancellationToken ct = default)
     {

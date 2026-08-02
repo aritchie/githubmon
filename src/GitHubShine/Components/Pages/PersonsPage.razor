@@ -1,0 +1,371 @@
+@page "/persons"
+@implements IDisposable
+@inject IMediator Mediator
+@inject IConfigStore Config
+@inject IPersonStore Persons
+@inject PersonCache Cache
+@inject NavigationManager Nav
+@inject IBrowser Browser
+@inject IToastService Toast
+
+<div class="page">
+    <div class="page-header">
+        <div>
+            <h1>People</h1>
+            <span class="subtitle">@Subtitle</span>
+        </div>
+        <span class="spacer"></span>
+        @if (cards.Count > 0)
+        {
+            <button class="btn primary" @onclick="@(() => Nav.NavigateTo("/persons/add"))">+ Follow</button>
+        }
+        <button class="btn" @onclick="RefreshAsync" disabled="@isBusy">
+            @if (isBusy)
+            {
+                <span class="spinner"></span>
+            }
+            Refresh
+        </button>
+    </div>
+
+    @if (Config.Accounts.Count == 0)
+    {
+        <div class="card empty-state">
+            <h2>No accounts yet</h2>
+            <p>People are looked up with an account's token, so connect an account first.</p>
+            <button class="btn primary" @onclick="@(() => Nav.NavigateTo("/accounts/edit"))">+ Add an account</button>
+        </div>
+    }
+    else if (cards.Count == 0)
+    {
+        <div class="card empty-state">
+            <h2>Not following anyone yet</h2>
+            <p>
+                Follow a person or an organisation by their login to watch their stars, followers and
+                repositories here. This is local to this app — nothing is followed on the host itself.
+            </p>
+            <button class="btn primary" @onclick="@(() => Nav.NavigateTo("/persons/add"))">+ Follow someone</button>
+        </div>
+    }
+    else
+    {
+        <div class="card repo-table person-table">
+            @* Re-keyed whenever the followed set changes, for the same reason the repositories
+               grid is: ServerData is only re-invoked by the grid itself (on a header click) or on
+               its first render, so recreating the component is the only way to push an added or
+               removed row into it. *@
+            <DataGrid TItem="PersonCardModel"
+                      @key="gridEpoch"
+                      ServerData="LoadAsync"
+                      SortMode="DataGridSortMode.Single"
+                      Dense="true"
+                      Hover="true"
+                      Striped="true"
+                      Bordered="true"
+                      FixedHeader="true"
+                      Height="calc(100vh - 195px)"
+                      NoRecordsText="Nobody is being followed.">
+                <Columns>
+                    @* Filtering is off on every column: with ServerData in play the grid hands
+                       filters back for the app to apply, and sorting is what this page is for. *@
+                    <PropertyColumn Property="c => c.Login" Title="Person" Filterable="false">
+                        <CellTemplate>
+                            <span class="person-cell grid-link" title="@context.Item.Tooltip"
+                                  @onclick="() => OpenAsync(context.Item.ProfileUrl)">
+                                @if (context.Item.AvatarUrl is { Length: > 0 } avatar)
+                                {
+                                    <img class="person-avatar" src="@avatar" alt="" loading="lazy" />
+                                }
+                                <span class="person-names">
+                                    <span class="person-login">@context.Item.Login</span>
+                                    @if (context.Item.DisplayName is { Length: > 0 } name)
+                                    {
+                                        <span class="person-fullname">@name</span>
+                                    }
+                                </span>
+                            </span>
+                            @if (context.Item.HasError)
+                            {
+                                <span title="@context.Item.ErrorMessage">
+                                    <Pill Text="Error" Type="PillType.Critical" />
+                                </span>
+                            }
+                        </CellTemplate>
+                    </PropertyColumn>
+
+                    <PropertyColumn Property="c => c.TypeLabel" Title="Type" Filterable="false">
+                        <CellTemplate>
+                            <Pill Text="@(context.Item.IsOrganization ? "Org" : "User")"
+                                  Type="@(context.Item.IsOrganization ? PillType.Warning : PillType.Info)" />
+                        </CellTemplate>
+                    </PropertyColumn>
+
+                    <PropertyColumn Property="c => c.AccountLabel" Title="Account" Filterable="false" />
+
+                    <PropertyColumn Property="c => c.Followers" Title="Followers" Filterable="false">
+                        <CellTemplate>
+                            <span class="grid-link grid-num" title="Open followers"
+                                  @onclick="() => OpenAsync(context.Item.FollowersUrl)">@Num(context.Item, context.Item.Followers)</span>
+                        </CellTemplate>
+                    </PropertyColumn>
+
+                    <PropertyColumn Property="c => c.Following" Title="Following" Filterable="false">
+                        <CellTemplate>
+                            <span class="grid-link grid-num" title="Open following"
+                                  @onclick="() => OpenAsync(context.Item.FollowingUrl)">@Num(context.Item, context.Item.Following)</span>
+                        </CellTemplate>
+                    </PropertyColumn>
+
+                    <PropertyColumn Property="c => c.PublicRepos" Title="Repos" Filterable="false">
+                        <CellTemplate>
+                            <span class="grid-link grid-num" title="Open repositories"
+                                  @onclick="() => OpenAsync(context.Item.ReposUrl)">@Num(context.Item, context.Item.PublicRepos)</span>
+                        </CellTemplate>
+                    </PropertyColumn>
+
+                    @* Summed across their repositories — see GitPersonSnapshotData.TotalStars for
+                       why it's a listing rather than a lookup, and where it stops counting. *@
+                    <PropertyColumn Property="c => c.TotalStars" Title="Stars" Filterable="false">
+                        <CellTemplate>
+                            <span class="grid-link grid-num"
+                                  title="@(context.Item.StarsTruncated
+                                             ? "Stars across their repositories — at least this many; only the first " + GitPersonLimits.MaxRepos.ToString("N0") + " repositories are counted"
+                                             : "Stars across their repositories")"
+                                  @onclick="() => OpenAsync(context.Item.ReposUrl)">
+                                ★ @(context.Item.IsPending
+                                        ? "…"
+                                        : context.Item.TotalStars.ToString("N0") + (context.Item.StarsTruncated ? "+" : ""))
+                            </span>
+                        </CellTemplate>
+                    </PropertyColumn>
+
+                    <PropertyColumn Property="c => c.Gists" Title="Gists" Filterable="false">
+                        <CellTemplate>
+                            <span class="grid-num">@Num(context.Item, context.Item.Gists)</span>
+                        </CellTemplate>
+                    </PropertyColumn>
+
+                    <PropertyColumn Property="c => c.Members" Title="Members" Filterable="false">
+                        <CellTemplate>
+                            @if (context.Item.IsOrganization)
+                            {
+                                <span class="grid-link grid-num"
+                                      title="@(context.Item.MembersTruncated
+                                                 ? "At least this many members — only the first " + GitPersonLimits.MaxMembers.ToString("N0") + " are counted"
+                                                 : "Open members")"
+                                      @onclick="() => OpenAsync(context.Item.MembersUrl)">
+                                    @(Num(context.Item, context.Item.Members) + (context.Item.MembersTruncated ? "+" : ""))
+                                </span>
+                            }
+                            else
+                            {
+                                <span class="grid-num muted">—</span>
+                            }
+                        </CellTemplate>
+                    </PropertyColumn>
+
+                    <PropertyColumn Property="c => c.JoinedAt" Title="Joined" Filterable="false">
+                        <CellTemplate>
+                            <span title="@context.Item.JoinedAt?.ToString("D")">
+                                @(context.Item.JoinedAt?.ToString("MMM yyyy") ?? "—")
+                            </span>
+                        </CellTemplate>
+                    </PropertyColumn>
+
+                    <PropertyColumn Property="c => c.Location" Title="Location" Filterable="false">
+                        <CellTemplate>
+                            <span class="person-location">@(context.Item.Location ?? "—")</span>
+                        </CellTemplate>
+                    </PropertyColumn>
+
+                    @* Sortable="false": an actions column has nothing to order by, and letting it
+                       take a sort would persist a column id the sort switch can't resolve. *@
+                    <TemplateColumn TItem="PersonCardModel" Title="" Sortable="false" Filterable="false">
+                        <CellTemplate>
+                            @if (pendingUnfollowId == context.Item.Key)
+                            {
+                                <button class="btn danger btn-tiny" @onclick="() => UnfollowAsync(context.Item)">Confirm</button>
+                                <button class="btn btn-tiny" @onclick="() => pendingUnfollowId = null">Cancel</button>
+                            }
+                            else
+                            {
+                                <button class="btn btn-tiny" title="Stop following"
+                                        @onclick="() => pendingUnfollowId = context.Item.Key">Unfollow</button>
+                            }
+                        </CellTemplate>
+                    </TemplateColumn>
+                </Columns>
+            </DataGrid>
+        </div>
+    }
+</div>
+
+@code {
+    readonly List<PersonCardModel> cards = new();
+    readonly List<IDisposable> subs = new();
+
+    bool isBusy;
+    int gridEpoch;
+    string? pendingUnfollowId;
+
+    PersonGridSort sort = PersonGridSort.Default;
+
+    // False until the grid has asked for data once. The first ask carries an empty sort list
+    // (the grid starts unsorted), which must NOT be read as "the user cleared the sort" —
+    // that would overwrite the sort just restored from storage.
+    bool gridLoaded;
+
+    string Subtitle
+    {
+        get
+        {
+            var orgs = cards.Count(c => c.IsOrganization);
+            var people = cards.Count - orgs;
+            var arrow = sort.Descending ? "↓" : "↑";
+            return $"{people} {(people == 1 ? "person" : "people")} and {orgs} organisation{(orgs == 1 ? "" : "s")} " +
+                   $"· sorted by {PersonGridColumns.Label(sort.ColumnId)} {arrow}";
+        }
+    }
+
+    /// <summary>
+    /// A counter cell. "…" until the first snapshot lands, "—" where the backend never reported
+    /// the number at all — neither is a zero, and showing one would read as a measurement.
+    /// </summary>
+    static string Num(PersonCardModel card, int? value)
+        => card.IsPending ? "…" : value?.ToString("N0") ?? "—";
+
+    protected override async Task OnInitializedAsync()
+    {
+        subs.Add(Mediator.Subscribe<PersonSnapshotUpdatedEvent>(OnSnapshotUpdated));
+        Persons.Changed += OnPersonsChanged;
+        Config.Changed += OnPersonsChanged;
+
+        sort = await Config.GetPersonGridSortAsync();
+        await Config.ReloadAsync();
+        await Persons.ReloadAsync();
+        RebuildCards();
+    }
+
+    /// <summary>
+    /// The grid's data source, and the only hook it exposes onto its sort state — so persisting
+    /// here IS the "remember my sort" feature. Called on first render and after every header click.
+    /// </summary>
+    async Task<GridData<PersonCardModel>> LoadAsync(GridState state)
+    {
+        if (gridLoaded)
+        {
+            // A real header click. An empty list means the column was cycled past descending back
+            // to unsorted — fall back to the default rather than leaving the rows in whatever
+            // arbitrary order they happened to be in.
+            var def = state.SortDefinitions.FirstOrDefault();
+            var next = def is null
+                ? PersonGridSort.Default
+                : new PersonGridSort(def.ColumnId, def.Direction == DataGridSortDirection.Descending);
+
+            if (next != sort)
+            {
+                sort = next;
+                await Config.SetPersonGridSortAsync(sort);
+                // The grid re-renders itself after this returns, but this page does not — without
+                // it the header line keeps describing the previous sort.
+                StateHasChanged();
+            }
+        }
+        gridLoaded = true;
+
+        var ordered = sort.Order(cards);
+        return new GridData<PersonCardModel>(ordered, ordered.Count);
+    }
+
+    Task OpenAsync(string url) => Browser.OpenAsync(url, BrowserLaunchMode.External);
+
+    void RebuildCards()
+    {
+        var existing = cards.ToDictionary(c => c.Key);
+        var before = cards.Select(c => c.Key).ToList();
+        cards.Clear();
+
+        var accounts = Config.Accounts.ToDictionary(a => a.Id);
+
+        foreach (var person in Persons.People)
+        {
+            // A row whose account has been deleted has no token to read it with. The store prunes
+            // these on delete, so this only guards an interrupted one.
+            if (!accounts.TryGetValue(person.AccountId, out var account))
+                continue;
+
+            if (!existing.TryGetValue(person.Id, out var card))
+            {
+                card = new PersonCardModel(account, person);
+                var snap = Cache.TryGet(person);
+                if (snap is not null)
+                    card.Apply(snap);
+            }
+            cards.Add(card);
+        }
+
+        // Only a changed row set needs the grid rebuilt — value updates reach it through the card
+        // instances it already holds.
+        if (!before.SequenceEqual(cards.Select(c => c.Key)))
+        {
+            gridEpoch++;
+            gridLoaded = false;
+        }
+    }
+
+    void OnPersonsChanged(object? sender, EventArgs e)
+        => _ = InvokeAsync(() =>
+        {
+            RebuildCards();
+            StateHasChanged();
+        });
+
+    Task OnSnapshotUpdated(PersonSnapshotUpdatedEvent e, IMediatorContext _, CancellationToken __)
+        => InvokeAsync(() =>
+        {
+            var card = cards.FirstOrDefault(c => c.Key == e.PersonId);
+            if (card is null)
+                return;
+            // Cards are mutated in place so the grid re-reads new values off the instances it
+            // already holds, and rows keep their position until the next header click rather than
+            // jumping under the pointer mid-poll. Only re-render when something displayed actually
+            // moved — an idle app must not push a render batch into the WebView on every poll.
+            if (card.Apply(e.Snapshot))
+                StateHasChanged();
+        });
+
+    async Task UnfollowAsync(PersonCardModel card)
+    {
+        pendingUnfollowId = null;
+        await Persons.RemoveAsync(card.Key);
+        // Drop the cached counters too, so re-following the same login doesn't paint the old
+        // numbers before its first fetch.
+        Cache.Remove(card.Key);
+        await Toast.SuccessAsync($"Unfollowed {card.Login}");
+    }
+
+    async Task RefreshAsync()
+    {
+        if (isBusy)
+            return;
+        isBusy = true;
+        try
+        {
+            // Just the people — the repositories poll is a separate, much larger sweep and this
+            // button is on the people page.
+            await Mediator.Send(new RefreshPersonsCommand(true));
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    public void Dispose()
+    {
+        Persons.Changed -= OnPersonsChanged;
+        Config.Changed -= OnPersonsChanged;
+        foreach (var s in subs)
+            s.Dispose();
+    }
+}

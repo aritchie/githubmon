@@ -13,6 +13,13 @@ namespace GitHubShine.Providers;
 /// </summary>
 public sealed class GiteaProvider(HttpClient client, string? hostUrl, string token, string accountId) : IGitProvider
 {
+    /// <summary>
+    /// Items per page. Gitea's default <c>MAX_RESPONSE_ITEMS</c> is 50 and it silently clamps
+    /// anything larger, which would make a "short page means last page" loop stop after one
+    /// page — so ask for exactly what it will give.
+    /// </summary>
+    const int PageSize = 50;
+
     readonly HttpClient http = Configure(client, hostUrl, token);
 
     /// <summary>
@@ -52,7 +59,8 @@ public sealed class GiteaProvider(HttpClient client, string? hostUrl, string tok
             GetInt(root, "stars_count"),
             GetInt(root, "forks_count"),
             GetInt(root, "watchers_count"),
-            GetPushedAt(root));
+            GetPushedAt(root),
+            GetBool(root, "private"));
     }
 
     async Task<IReadOnlyList<PullRequestSummary>> GetOpenPullRequestsAsync(MonitoredRepo repo, CancellationToken ct = default)
@@ -167,6 +175,128 @@ public sealed class GiteaProvider(HttpClient client, string? hostUrl, string tok
         return list;
     }
 
+    public async Task<GitPersonProfile?> GetPersonAsync(string login, CancellationToken ct = default)
+    {
+        // Gitea stores organisations as a flavour of user, so /users/{login} usually answers for
+        // both — but the org payload carries the fields we want (description, website) under
+        // different names and without the follower counters. Probe /orgs first: a hit settles the
+        // kind outright, and a miss costs one 404 on a flow the user triggered by hand.
+        using (var org = await GetJsonOrNullAsync($"orgs/{login}", ct).ConfigureAwait(false))
+        {
+            if (org is not null)
+            {
+                var o = org.RootElement;
+                return new GitPersonProfile(
+                    GetString(o, "username") ?? login,
+                    GitPersonKind.Organization,
+                    GetString(o, "full_name"),
+                    GetString(o, "avatar_url"),
+                    GetString(o, "description"),
+                    GetString(o, "location"),
+                    // Gitea organisations have no company or gists, and expose no creation date
+                    // or follower counts. Null so the grid shows "—" rather than a fake zero.
+                    null,
+                    GetString(o, "website"),
+                    null,
+                    null,
+                    // Filled in by GetPersonSnapshotAsync from the repo listing it pages anyway.
+                    null,
+                    null,
+                    null);
+            }
+        }
+
+        using var user = await GetJsonOrNullAsync($"users/{login}", ct).ConfigureAwait(false);
+        if (user is null)
+            return null;
+
+        var u = user.RootElement;
+        return new GitPersonProfile(
+            GetString(u, "login") ?? GetString(u, "username") ?? login,
+            GitPersonKind.User,
+            GetString(u, "full_name"),
+            GetString(u, "avatar_url"),
+            GetString(u, "description"),
+            GetString(u, "location"),
+            null, // no company field on a Gitea user
+            GetString(u, "website"),
+            GetInt(u, "followers_count"),
+            GetInt(u, "following_count"),
+            null, // no repo count on the payload — the star listing below supplies it
+            null, // Gitea has no gists
+            GetDateOrNull(u, "created"));
+    }
+
+    public async Task<GitPersonSnapshotData?> GetPersonSnapshotAsync(string login, GitPersonKind kind, CancellationToken ct = default)
+    {
+        var profile = await GetPersonAsync(login, ct).ConfigureAwait(false);
+        if (profile is null)
+            return null;
+
+        // The repo listing has to be paged for the star sum regardless, so take the repo count
+        // off the same pass — Gitea publishes neither number on the profile payload.
+        var stars = await SumStarsAsync(login, profile.Kind, ct).ConfigureAwait(false);
+
+        var members = profile.Kind == GitPersonKind.Organization
+            ? await CountMembersAsync(login, ct).ConfigureAwait(false)
+            : null;
+
+        return new GitPersonSnapshotData(
+            profile with { PublicRepos = stars.Repos },
+            stars.Stars,
+            members?.Total,
+            stars.Truncated,
+            members?.Truncated ?? false);
+    }
+
+    /// <summary>A tally over a capped listing, and whether the cap cut it short.</summary>
+    readonly record struct PagedTally(int Total, bool Truncated);
+
+    async Task<(int Stars, int Repos, bool Truncated)> SumStarsAsync(string login, GitPersonKind kind, CancellationToken ct)
+    {
+        var root = kind == GitPersonKind.Organization ? $"orgs/{login}/repos" : $"users/{login}/repos";
+        var stars = 0;
+        var repos = 0;
+
+        for (var page = 1; page <= GitPersonLimits.MaxRepos / PageSize; page++)
+        {
+            using var doc = await GetJsonAsync($"{root}?page={page}&limit={PageSize}", ct).ConfigureAwait(false);
+            var count = 0;
+            foreach (var r in doc.RootElement.EnumerateArray())
+            {
+                count++;
+                stars += GetInt(r, "stars_count");
+            }
+            repos += count;
+            if (count < PageSize)
+                return (stars, repos, false); // ran out before the cap — a complete tally
+        }
+        // Every page came back full, so the cap — not the data — is what stopped us.
+        return (stars, repos, true);
+    }
+
+    async Task<PagedTally?> CountMembersAsync(string login, CancellationToken ct)
+    {
+        var members = 0;
+        for (var page = 1; page <= GitPersonLimits.MaxMembers / PageSize; page++)
+        {
+            // A token that can't read the member list gets 403 — "unknown", not "no members".
+            var doc = await GetJsonOrNullAsync($"orgs/{login}/members?page={page}&limit={PageSize}", ct)
+                .ConfigureAwait(false);
+            if (doc is null)
+                return null;
+
+            using (doc)
+            {
+                var count = doc.RootElement.EnumerateArray().Count();
+                members += count;
+                if (count < PageSize)
+                    return new PagedTally(members, false);
+            }
+        }
+        return new PagedTally(members, true);
+    }
+
     public async Task<GitRepoInfo?> GetRepoInfoAsync(MonitoredRepo repo, CancellationToken ct = default)
     {
         try
@@ -241,6 +371,23 @@ public sealed class GiteaProvider(HttpClient client, string? hostUrl, string tok
     async Task<JsonDocument> GetJsonAsync(string relativeUrl, CancellationToken ct)
     {
         var resp = await http.GetAsync(relativeUrl, ct).ConfigureAwait(false);
+        return await ReadJsonAsync(resp, relativeUrl, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Like <see cref="GetJsonAsync"/> but null for the two "you can't have this" statuses instead
+    /// of throwing. Both are expected answers on the person lookups: a 404 is how the org probe
+    /// says "that login is a user", and a 403 is a token without permission to read a member list.
+    /// Every other failure still throws — a 500 must not be mistaken for an absent resource.
+    /// </summary>
+    async Task<JsonDocument?> GetJsonOrNullAsync(string relativeUrl, CancellationToken ct)
+    {
+        var resp = await http.GetAsync(relativeUrl, ct).ConfigureAwait(false);
+        if (resp.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.Forbidden)
+        {
+            resp.Dispose();
+            return null;
+        }
         return await ReadJsonAsync(resp, relativeUrl, ct).ConfigureAwait(false);
     }
 

@@ -66,6 +66,14 @@
 
                     <PropertyColumn Property="c => c.AccountLabel" Title="Account" Filterable="false" />
 
+                    @* Bound to the rank rather than a bool so sorting reads as private-first
+                       and repos with no snapshot yet sort last instead of with the public ones. *@
+                    <PropertyColumn Property="c => c.VisibilityRank" Title="Visibility" Filterable="false">
+                        <CellTemplate>
+                            <VisibilityPill IsPrivate="context.Item.IsPrivate" />
+                        </CellTemplate>
+                    </PropertyColumn>
+
                     <PropertyColumn Property="c => c.Stars" Title="Stars" Filterable="false">
                         <CellTemplate>
                             <span class="grid-link grid-num" title="Open stargazers"

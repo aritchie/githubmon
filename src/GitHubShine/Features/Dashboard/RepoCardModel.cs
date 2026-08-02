@@ -27,6 +27,20 @@ public sealed class RepoCardModel(MonitoredAccount account, MonitoredRepo repo)
     /// <summary>The latest workflow run's page (the failure detail when it failed); null until a run is seen.</summary>
     public string? LatestRunUrl { get; private set; }
 
+    /// <summary>
+    /// Repo visibility, or null until a snapshot has actually reached the repo payload
+    /// (a fresh card, or one whose only snapshot errored). Null renders no pill at all
+    /// rather than claiming the repo is public.
+    /// </summary>
+    public bool? IsPrivate { get; private set; }
+
+    /// <summary>
+    /// Visibility as a sortable rank so the repositories grid can order by it — private (2)
+    /// above public (1) above not-yet-known (0). Derived from <see cref="IsPrivate"/>, which
+    /// is already in <see cref="RenderSignature"/>.
+    /// </summary>
+    public int VisibilityRank => IsPrivate switch { true => 2, false => 1, null => 0 };
+
     public int OpenIssues { get; private set; }
     public int OpenPullRequests { get; private set; }
     public int Stars { get; private set; }
@@ -57,10 +71,11 @@ public sealed class RepoCardModel(MonitoredAccount account, MonitoredRepo repo)
     // Everything the dashboard actually renders for this card. LastUpdated is
     // intentionally excluded — it isn't shown anywhere, so a poll that only
     // refreshes the fetch timestamp must not count as a change.
-    (int, int, int, int, int, string?, bool, bool, PillType, string?, string?, bool, string?) RenderSignature()
+    (int, int, int, int, int, string?, bool, bool, PillType, string?, string?, bool, string?, bool?) RenderSignature()
         => (OpenIssues, OpenPullRequests, Stars, Forks, Watchers,
             LatestRunStatus, LatestRunSucceeded, LatestRunFailed,
-            LatestRunPillType, LatestRunDescription, LatestRunUrl, HasError, ErrorMessage);
+            LatestRunPillType, LatestRunDescription, LatestRunUrl, HasError, ErrorMessage,
+            IsPrivate);
 
     /// <summary>
     /// Folds a fresh snapshot into the card. Returns true only when a rendered
@@ -77,6 +92,11 @@ public sealed class RepoCardModel(MonitoredAccount account, MonitoredRepo repo)
         LastUpdated = snap.FetchedAt;
         if (snap.HasError)
             return RenderSignature() != before;
+
+        // Only overwrite visibility when the snapshot actually carries it — a snapshot cached
+        // before this field existed would otherwise blank out a pill we already had on screen.
+        if (snap.Private is not null)
+            IsPrivate = snap.Private;
 
         OpenIssues = snap.OpenIssues;
         OpenPullRequests = snap.OpenPullRequests.Count;

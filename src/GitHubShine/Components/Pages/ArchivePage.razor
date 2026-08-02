@@ -2,6 +2,7 @@
 @implements IDisposable
 @inject IConfigStore Config
 @inject IRepoArchiver Archiver
+@inject SnapshotCache Cache
 @inject IFileDialogs FileDialogs
 @inject IToastService Toast
 
@@ -55,6 +56,9 @@
                                @onchange="e => row.Selected = (bool)e.Value!" />
                         <span class="name">@row.Repo.FullName</span>
                         <span class="desc">@row.Account.Label</span>
+                        @* Visibility comes off the poller's cached snapshot — this page never
+                           calls the API itself, so it stays blank until a poll has landed. *@
+                        <VisibilityPill IsPrivate="Cache.TryGet(row.Account.Id, row.Repo)?.Private" />
                         <span class="badge">
                             @switch (row.Status)
                             {

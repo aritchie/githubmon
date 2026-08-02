@@ -1,0 +1,247 @@
+@page "/persons/add"
+@inject IConfigStore Config
+@inject IPersonStore Persons
+@inject IGitProviderFactory Factory
+@inject IMediator Mediator
+@inject NavigationManager Nav
+@inject IToastService Toast
+
+<div class="page narrow">
+    <div class="page-header">
+        <div>
+            <h1>Follow someone</h1>
+            <span class="subtitle">
+                Watch a person or an organisation by their login. This is local to this app —
+                nothing is followed on the host itself.
+            </span>
+        </div>
+    </div>
+
+    @if (Config.Accounts.Count == 0)
+    {
+        <div class="card empty-state">
+            <h2>No accounts yet</h2>
+            <p>A login is looked up with an account's token, so connect an account first.</p>
+            <button class="btn primary" @onclick="@(() => Nav.NavigateTo("/accounts/edit"))">+ Add an account</button>
+        </div>
+    }
+    else
+    {
+        <div class="card">
+            <div class="section-title">Who</div>
+
+            <div class="field">
+                <label>
+                    Account
+                    <span class="hint">— whose token looks the login up, and which host it's looked up on</span>
+                </label>
+                <select @bind="accountId" @bind:after="ResetLookup">
+                    @foreach (var account in Config.Accounts)
+                    {
+                        <option value="@account.Id">@account.Label</option>
+                    }
+                </select>
+            </div>
+
+            <div class="field">
+                <label>Login</label>
+                <input type="text" @bind="login" @bind:event="oninput" @onkeydown="OnLoginKeyDown"
+                       placeholder="e.g. octocat, or an organisation name" />
+            </div>
+
+            <div class="pills">
+                <button class="btn" @onclick="LookUpAsync" disabled="@(isBusy || !CanLookUp)">Look up</button>
+                @if (isBusy)
+                {
+                    <span class="spinner"></span>
+                }
+            </div>
+
+            @if (message is not null)
+            {
+                <div class="hint" style="margin-top: 8px;">@message</div>
+            }
+        </div>
+
+        @if (found is not null)
+        {
+            <div class="card person-preview">
+                <div class="person-preview-head">
+                    @if (found.AvatarUrl is { Length: > 0 } avatar)
+                    {
+                        <img class="person-preview-avatar" src="@avatar" alt="" />
+                    }
+                    <div class="person-preview-id">
+                        <div>
+                            <strong>@found.Login</strong>
+                            <Pill Text="@(found.Kind == GitPersonKind.Organization ? "Organization" : "User")"
+                                  Type="@(found.Kind == GitPersonKind.Organization ? PillType.Warning : PillType.Info)" />
+                        </div>
+                        @if (found.Name is { Length: > 0 })
+                        {
+                            <div class="meta">@found.Name</div>
+                        }
+                        @if (found.Bio is { Length: > 0 })
+                        {
+                            <div class="meta">@found.Bio</div>
+                        }
+                        @if (found.Location is { Length: > 0 })
+                        {
+                            <div class="meta">@found.Location</div>
+                        }
+                    </div>
+                </div>
+
+                <div class="person-preview-stats">
+                    @if (found.Followers is { } followers)
+                    {
+                        <span><strong>@followers.ToString("N0")</strong> followers</span>
+                    }
+                    @if (found.Following is { } following)
+                    {
+                        <span><strong>@following.ToString("N0")</strong> following</span>
+                    }
+                    @if (found.PublicRepos is { } repos)
+                    {
+                        <span><strong>@repos.ToString("N0")</strong> repos</span>
+                    }
+                    @if (found.JoinedAt is { } joined)
+                    {
+                        <span>joined <strong>@joined.ToString("MMM yyyy")</strong></span>
+                    }
+                </div>
+
+                @if (alreadyFollowed)
+                {
+                    <div class="hint">This login is already followed through this account.</div>
+                }
+            </div>
+        }
+
+        <div class="actions-bar">
+            <span class="spacer"></span>
+            <button class="btn" @onclick="@(() => Nav.NavigateTo("/persons"))">Cancel</button>
+            <button class="btn primary" @onclick="FollowAsync" disabled="@(isBusy || found is null || alreadyFollowed)">
+                Follow
+            </button>
+        </div>
+    }
+</div>
+
+@code {
+    string accountId = "";
+    string login = "";
+    string? message;
+    bool isBusy;
+
+    GitPersonProfile? found;
+    bool alreadyFollowed;
+
+    bool CanLookUp => !string.IsNullOrWhiteSpace(login);
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Config.ReloadAsync();
+        await Persons.ReloadAsync();
+        accountId = Config.Accounts.FirstOrDefault()?.Id ?? "";
+    }
+
+    /// <summary>
+    /// Clears a resolved profile whenever the inputs move. Following writes the login exactly as
+    /// the host spelled it, so a preview left over from a different account or a since-edited
+    /// login must never survive to be saved.
+    /// </summary>
+    void ResetLookup()
+    {
+        found = null;
+        alreadyFollowed = false;
+        message = null;
+    }
+
+    async Task OnLoginKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key != "Enter")
+        {
+            ResetLookup();
+            return;
+        }
+        if (CanLookUp)
+            await LookUpAsync();
+    }
+
+    async Task LookUpAsync()
+    {
+        var account = Config.Accounts.FirstOrDefault(a => a.Id == accountId);
+        if (account is null)
+        {
+            message = "Pick an account first.";
+            return;
+        }
+
+        ResetLookup();
+        isBusy = true;
+        try
+        {
+            var provider = await Factory.CreateAsync(account);
+            if (provider is null)
+            {
+                message = $"{account.Label} has no token saved — add one on its account page first.";
+                return;
+            }
+
+            var profile = await provider.GetPersonAsync(login.Trim());
+            if (profile is null)
+            {
+                message = $"No user or organisation named \"{login.Trim()}\" on this host.";
+                return;
+            }
+
+            found = profile;
+            // Checked against the host's spelling of the login, not what was typed — the id is
+            // case-folded, so "Octocat" and "octocat" are the same row.
+            alreadyFollowed = Persons.People.Any(p => p.Id == FollowedPerson.MakeId(account.Id, profile.Login));
+        }
+        catch (Exception ex)
+        {
+            message = $"Lookup failed: {ex.Message}";
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    async Task FollowAsync()
+    {
+        var account = Config.Accounts.FirstOrDefault(a => a.Id == accountId);
+        if (account is null || found is null)
+            return;
+
+        isBusy = true;
+        try
+        {
+            await Persons.UpsertAsync(new FollowedPerson(
+                FollowedPerson.MakeId(account.Id, found.Login),
+                account.Id,
+                found.Login,
+                found.Kind,
+                found.Name,
+                DateTimeOffset.UtcNow));
+
+            await Toast.SuccessAsync($"Following {found.Login}");
+            Nav.NavigateTo("/persons");
+
+            // Fill the new row's counters in without waiting for the next poll. Fire-and-forget:
+            // it costs a paged repo listing, and the grid is already showing the row by then.
+            _ = Mediator.Send(new RefreshPersonsCommand(true));
+        }
+        catch (Exception ex)
+        {
+            message = $"Save failed: {ex.Message}";
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+}

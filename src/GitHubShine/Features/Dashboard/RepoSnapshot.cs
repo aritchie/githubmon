@@ -13,7 +13,11 @@ public sealed record RepoSnapshot(
     string? ErrorMessage,
     // Last push to the repo. Rides along on the poll the dashboard already runs, which is what
     // lets the sync list answer "is this backup behind?" without a request of its own.
-    DateTimeOffset? PushedAt = null)
+    DateTimeOffset? PushedAt = null,
+    // Whether the repo is private. Nullable because "not known yet" is a real state here: an
+    // errored snapshot never reached the repo payload, and snapshots cached before this field
+    // existed deserialize without it. Both must render no visibility pill rather than "Public".
+    bool? Private = null)
 {
     public bool HasError => ErrorMessage is not null;
 

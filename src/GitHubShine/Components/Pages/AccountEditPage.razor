@@ -130,9 +130,11 @@
                             {
                                 <Pill Text="Not visible to token" Type="PillType.Warning" />
                             }
-                            else if (repo.Private)
+                            else
                             {
-                                <Pill Text="Private" Type="PillType.Info" />
+                                @* Before the listing lands nothing is known about a saved repo's
+                                   visibility, so pass null rather than the not-yet-populated false. *@
+                                <VisibilityPill IsPrivate="@(hasFetchedRepos ? repo.Private : (bool?)null)" />
                             }
                         </span>
                     </label>

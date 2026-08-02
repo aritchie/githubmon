@@ -17,4 +17,5 @@ namespace GitHubShine;
 [JsonSerializable(typeof(SyncMapping))]
 [JsonSerializable(typeof(AutoSyncPrefs))]
 [JsonSerializable(typeof(PollState))]
+[JsonSerializable(typeof(FollowedPerson))]
 internal sealed partial class GitHubShineJsonContext : JsonSerializerContext;

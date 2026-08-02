@@ -141,6 +141,7 @@ public static class MauiProgram
             options.MapTypeToTable<SyncMapping>();
             options.MapTypeToTable<AutoSyncPrefs>();
             options.MapTypeToTable<PollState>();
+            options.MapTypeToTable<FollowedPerson>();
         });
 
         // [Singleton]-attributed services (ConfigStore, SecureTokenVault,

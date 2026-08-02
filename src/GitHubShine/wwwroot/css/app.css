@@ -370,6 +370,60 @@ input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px;
 /* Tabular figures so the count columns line up digit-for-digit down the page. */
 .repo-table .grid-num { font-variant-numeric: tabular-nums; }
 
+/* ---------- People grid ---------- */
+
+/* Inherits the whole .repo-table treatment (frame, scroller height fix, .grid-link,
+   .grid-num); this block only adds what the identity column needs. */
+
+.person-cell { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+
+.person-avatar {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background: var(--border); /* placeholder while the image loads, and if it never does */
+}
+
+/* Login over full name in one row's height — the grid is Dense, so the secondary line
+   is sized down rather than given a line of its own. */
+.person-names { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
+.person-login { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.person-fullname {
+    color: var(--fg-muted);
+    font-size: 11px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.person-table .person-location {
+    color: var(--fg-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* The unfollow cell holds two buttons while confirming, so they have to shrink to fit
+   a Dense row without setting the row height. */
+.btn-tiny { padding: 2px 8px; font-size: 11px; }
+
+/* ---------- Follow-someone preview ---------- */
+
+.person-preview-head { display: flex; align-items: flex-start; gap: 12px; }
+.person-preview-avatar { width: 56px; height: 56px; border-radius: 50%; flex-shrink: 0; background: var(--border); }
+.person-preview-id { min-width: 0; }
+.person-preview-id .meta { color: var(--fg-muted); font-size: 12px; }
+
+.person-preview-stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    margin-top: 12px;
+    color: var(--fg-muted);
+    font-size: 12px;
+}
+
 /* ---------- Inbox ---------- */
 
 .inbox-list { max-height: 280px; overflow-y: auto; }

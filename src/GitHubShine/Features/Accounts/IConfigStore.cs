@@ -25,6 +25,10 @@ public interface IConfigStore
     Task<RepoGridSort> GetRepoGridSortAsync();
     Task SetRepoGridSortAsync(RepoGridSort sort);
 
+    /// <summary>The people grid's last-used sort column and direction.</summary>
+    Task<PersonGridSort> GetPersonGridSortAsync();
+    Task SetPersonGridSortAsync(PersonGridSort sort);
+
     /// <summary>Dashboard card order as "accountId|owner/name" keys. Empty = natural (account/repo) order.</summary>
     Task<IReadOnlyList<string>> GetRepoOrderAsync();
     Task SetRepoOrderAsync(IReadOnlyList<string> orderedKeys);
