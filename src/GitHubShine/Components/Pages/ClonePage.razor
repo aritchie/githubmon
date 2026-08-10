@@ -1,0 +1,414 @@
+@page "/clone"
+@implements IDisposable
+@inject IConfigStore Config
+@inject ICloneStore Store
+@inject IRepoCloneEngine Engine
+@inject IGitCli Git
+@inject IFileDialogs FileDialogs
+@inject SnapshotCache Cache
+@inject IToastService Toast
+
+<div class="page narrow">
+    <div class="page-header">
+        <div>
+            <h1>Clone</h1>
+            <span class="subtitle">
+                Keep local working copies of the repos you monitor. A repo that isn't in the folder yet
+                is cloned on its default branch; one that's already there is fast-forwarded on whatever
+                branch it's currently on — unless it has uncommitted changes, in which case it's left alone.
+            </span>
+        </div>
+    </div>
+
+    @if (gitMissing)
+    {
+        <div class="card sync-warning">
+            <strong>git isn't available</strong>
+            <div class="meta">@gitMessage</div>
+        </div>
+    }
+
+    <div class="card">
+        <div class="section-title">Destination</div>
+
+        <div class="field">
+            <label>Folder</label>
+            <div class="repo-pick-toolbar">
+                <span class="@(HasRoot ? "" : "muted")" style="flex:1; overflow-wrap:anywhere;">
+                    @(HasRoot ? prefs.RootDirectory : "No folder chosen yet")
+                </span>
+                <button class="btn" @onclick="ChooseFolderAsync" disabled="@isBusy">
+                    @(HasRoot ? "Change…" : "Choose folder…")
+                </button>
+            </div>
+        </div>
+
+        <div class="field">
+            <label>Folder layout</label>
+            <select value="@prefs.Layout" @onchange="OnLayoutChangedAsync" disabled="@isBusy">
+                <option value="@CloneLayout.OwnerAndName">Group by owner — &lt;folder&gt;/owner/repo</option>
+                <option value="@CloneLayout.NameOnly">Flat — &lt;folder&gt;/repo</option>
+            </select>
+            <div class="hint">
+                @if (prefs.Layout == CloneLayout.NameOnly)
+                {
+                    <text>
+                        Flat is tidier until two accounts monitor a repo of the same name — then they'd
+                        share one folder. A folder whose <code>origin</code> is a different repo is
+                        reported and skipped rather than fetched into.
+                    </text>
+                }
+                else
+                {
+                    <text>Each owner gets its own subfolder, so repos of the same name never collide.</text>
+                }
+                @if (HasRoot && rows.Count > 0)
+                {
+                    <text> Example: @Engine.ResolvePath(prefs.RootDirectory!, rows[0].Repo, prefs.Layout)</text>
+                }
+            </div>
+        </div>
+    </div>
+
+    @if (rows.Count == 0)
+    {
+        <div class="card empty-state">
+            <h2>No repositories to clone</h2>
+            <p>Add an account and monitor some repositories first.</p>
+        </div>
+    }
+    else
+    {
+        <div class="card">
+            <div class="repo-pick-toolbar">
+                <button class="btn" @onclick="SelectAll" disabled="@isBusy">Select all</button>
+                <button class="btn" @onclick="ClearAll" disabled="@isBusy">Clear</button>
+                <span class="muted">
+                    @SelectedCount of @rows.Count selected
+                    @if (prefs.LastRunUtc is { } last)
+                    {
+                        <text> · last run @last.ToLocalTime().ToString("g")</text>
+                    }
+                </span>
+                <span class="spacer" style="flex:1;"></span>
+                @if (isBusy)
+                {
+                    <span class="spinner"></span>
+                    <button class="btn danger" @onclick="Cancel">Cancel</button>
+                }
+                else
+                {
+                    <button class="btn primary" @onclick="RunAsync" disabled="@(SelectedCount == 0)">
+                        Clone / update @SelectedCount repo@(SelectedCount == 1 ? "" : "s")…
+                    </button>
+                }
+            </div>
+
+            @if (isBusy)
+            {
+                <div class="hint" style="margin-bottom:8px;">
+                    <span class="spinner"></span> @doneCount of @totalToRun done…
+                </div>
+            }
+
+            <div class="repo-pick-list">
+                @foreach (var row in rows)
+                {
+                    <label class="repo-pick-row clone-row" @key="row.Key">
+                        <input type="checkbox" checked="@row.Selected" disabled="@isBusy"
+                               @onchange="e => row.Selected = (bool)e.Value!" />
+                        <span class="name">@row.Repo.FullName</span>
+                        <span class="desc" title="@RowDetail(row)">@RowDetail(row)</span>
+                        @* Visibility comes off the poller's cached snapshot — this page never calls
+                           the API itself, so it stays blank until a poll has landed. *@
+                        <VisibilityPill IsPrivate="Cache.TryGet(row.Account.Id, row.Repo)?.Private" />
+                        <span class="badge">
+                            @if (row.State == RunState.Running)
+                            {
+                                <span class="spinner"></span>
+                            }
+                            else if (row.State == RunState.Failed)
+                            {
+                                <span title="@row.Message"><Pill Text="Failed" Type="PillType.Critical" /></span>
+                            }
+                            else if (row.Outcome is { } outcome)
+                            {
+                                var pill = PillFor(outcome.Action);
+                                <span title="@outcome.Summary"><Pill Text="@pill.Text" Type="@pill.Type" /></span>
+                            }
+                        </span>
+                    </label>
+                }
+            </div>
+
+            @if (log.Count > 0)
+            {
+                <details class="sync-log">
+                    <summary>Run log (@log.Count)</summary>
+                    @foreach (var line in log)
+                    {
+                        <div>@line</div>
+                    }
+                </details>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    enum RunState { Idle, Running, Done, Failed }
+
+    sealed class CloneRow(MonitoredAccount account, MonitoredRepo repo)
+    {
+        public MonitoredAccount Account { get; } = account;
+        public MonitoredRepo Repo { get; } = repo;
+        public string Key => $"{this.Account.Id}|{this.Repo.FullName}";
+        public bool Selected { get; set; } = true;
+        public RunState State { get; set; }
+
+        /// <summary>What the last run did to this working copy, or null before it has run.</summary>
+        public CloneOutcome? Outcome { get; set; }
+
+        /// <summary>The failure text when <see cref="State"/> is Failed.</summary>
+        public string? Message { get; set; }
+    }
+
+    readonly List<CloneRow> rows = new();
+
+    // One log for the whole pass, each line tagged with its repo — a per-row log would need its own
+    // expander inside a row that's a single flex line, and failures are what anyone actually reads.
+    readonly List<string> log = new();
+
+    ClonePrefs prefs = ClonePrefs.Default;
+    bool isBusy;
+    bool gitMissing;
+    string gitMessage = "";
+    int doneCount;
+    int totalToRun;
+    CancellationTokenSource? cts;
+
+    bool HasRoot => !string.IsNullOrWhiteSpace(prefs.RootDirectory);
+    int SelectedCount => rows.Count(r => r.Selected);
+
+    protected override async Task OnInitializedAsync()
+    {
+        Config.Changed += OnConfigChanged;
+        await Config.ReloadAsync();
+        prefs = await Store.GetAsync();
+        Rebuild();
+
+        try
+        {
+            await Git.EnsureAvailableAsync();
+        }
+        catch (GitUnavailableException ex)
+        {
+            gitMissing = true;
+            gitMessage = ex.Message;
+        }
+    }
+
+    void Rebuild()
+    {
+        // Preserve selections (and any results already on screen) across config refreshes.
+        var existing = rows.ToDictionary(r => r.Key, StringComparer.OrdinalIgnoreCase);
+        var rebuilt = new List<CloneRow>();
+
+        foreach (var account in Config.Accounts)
+            foreach (var repo in account.Repos)
+                rebuilt.Add(existing.TryGetValue($"{account.Id}|{repo.FullName}", out var row)
+                    ? row
+                    : new CloneRow(account, repo));
+
+        rebuilt.Sort((a, b) =>
+        {
+            var byRepo = string.Compare(a.Repo.FullName, b.Repo.FullName, StringComparison.OrdinalIgnoreCase);
+            return byRepo != 0 ? byRepo : string.Compare(a.Account.Label, b.Account.Label, StringComparison.OrdinalIgnoreCase);
+        });
+
+        rows.Clear();
+        rows.AddRange(rebuilt);
+    }
+
+    void OnConfigChanged(object? sender, EventArgs e)
+        => _ = InvokeAsync(() =>
+        {
+            if (!isBusy)
+            {
+                Rebuild();
+                StateHasChanged();
+            }
+        });
+
+    /// <summary>What the row's second column says: the result once it has run, the destination before.</summary>
+    string RowDetail(CloneRow row)
+    {
+        if (row.State == RunState.Failed)
+            return row.Message ?? "Failed";
+        if (row.Outcome is { } outcome)
+            return outcome.Summary;
+        if (!HasRoot)
+            return row.Account.Label;
+        return $"{row.Account.Label} · {Engine.ResolvePath(prefs.RootDirectory!, row.Repo, prefs.Layout)}";
+    }
+
+    static (string Text, PillType Type) PillFor(CloneAction action) => action switch
+    {
+        CloneAction.Cloned => ("Cloned", PillType.Success),
+        CloneAction.Updated => ("Updated", PillType.Success),
+        CloneAction.UpToDate => ("Up to date", PillType.Info),
+        CloneAction.AheadOnly => ("Ahead", PillType.Info),
+        _ => ("Skipped", PillType.Warning)
+    };
+
+    void SelectAll() => rows.ForEach(r => r.Selected = true);
+    void ClearAll() => rows.ForEach(r => r.Selected = false);
+    void Cancel() => cts?.Cancel();
+
+    async Task ChooseFolderAsync()
+    {
+        var folder = await FileDialogs.PickFolderAsync();
+        if (folder is null)
+            return;
+
+        prefs = prefs with { RootDirectory = folder };
+        await Store.SaveAsync(prefs);
+    }
+
+    async Task OnLayoutChangedAsync(ChangeEventArgs e)
+    {
+        var layout = Enum.TryParse<CloneLayout>(e.Value?.ToString(), out var value)
+            ? value
+            : CloneLayout.OwnerAndName;
+
+        prefs = prefs with { Layout = layout };
+        await Store.SaveAsync(prefs);
+    }
+
+    async Task RunAsync()
+    {
+        var targets = rows.Where(r => r.Selected).ToList();
+        if (isBusy || targets.Count == 0)
+            return;
+
+        // First run of all: no folder has been picked yet, so ask for one rather than making the
+        // user find the Choose button first.
+        if (!HasRoot)
+        {
+            await ChooseFolderAsync();
+            if (!HasRoot)
+                return;
+        }
+
+        var root = prefs.RootDirectory!;
+        cts = new CancellationTokenSource();
+        isBusy = true;
+        doneCount = 0;
+        totalToRun = targets.Count;
+        log.Clear();
+
+        foreach (var row in targets)
+        {
+            row.State = RunState.Idle;
+            row.Outcome = null;
+            row.Message = null;
+        }
+
+        var failures = 0;
+        var changed = 0;
+        var skipped = 0;
+
+        try
+        {
+            // Sequential: each repo is a full fetch (and possibly a clone), so running them at once
+            // would only contend on the same network and disk while making the log unreadable.
+            foreach (var row in targets)
+            {
+                cts.Token.ThrowIfCancellationRequested();
+                row.State = RunState.Running;
+                StateHasChanged();
+
+                var progress = new Progress<string>(line =>
+                {
+                    log.Add($"{row.Repo.FullName}: {line}");
+                    StateHasChanged();
+                });
+
+                try
+                {
+                    var outcome = await Engine.CloneOrUpdateAsync(
+                        row.Account, row.Repo, root, prefs.Layout, progress, cts.Token);
+
+                    row.Outcome = outcome;
+                    row.State = RunState.Done;
+
+                    if (outcome.Changed)
+                        changed++;
+                    else if (outcome.Skipped)
+                        skipped++;
+                }
+                catch (OperationCanceledException)
+                {
+                    row.State = RunState.Idle;
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    row.State = RunState.Failed;
+                    row.Message = ex.Message;
+                    log.Add($"{row.Repo.FullName}: {ex.Message}");
+                    failures++;
+                }
+
+                doneCount++;
+                StateHasChanged();
+            }
+
+            await Store.MarkRunAsync(DateTimeOffset.UtcNow);
+            prefs = await Store.GetAsync();
+
+            var note = Summarise(changed, skipped, failures);
+            if (failures > 0)
+                await Toast.DangerAsync($"{note} — open the run log for details");
+            else if (skipped > 0)
+                await Toast.InfoAsync($"{note} — hover a Skipped badge for why");
+            else
+                await Toast.SuccessAsync(note);
+        }
+        catch (OperationCanceledException)
+        {
+            await Toast.InfoAsync($"Cancelled — {doneCount} of {totalToRun} done");
+        }
+        finally
+        {
+            isBusy = false;
+            cts?.Dispose();
+            cts = null;
+            StateHasChanged();
+        }
+    }
+
+    string Summarise(int changed, int skipped, int failures)
+    {
+        var upToDate = doneCount - changed - skipped - failures;
+        var parts = new List<string>();
+
+        if (changed > 0)
+            parts.Add($"{changed} cloned or updated");
+        if (upToDate > 0)
+            parts.Add($"{upToDate} already up to date");
+        if (skipped > 0)
+            parts.Add($"{skipped} skipped");
+        if (failures > 0)
+            parts.Add($"{failures} failed");
+
+        return parts.Count == 0 ? "Nothing to do" : string.Join(", ", parts);
+    }
+
+    public void Dispose()
+    {
+        Config.Changed -= OnConfigChanged;
+        cts?.Cancel();
+        cts?.Dispose();
+    }
+}
