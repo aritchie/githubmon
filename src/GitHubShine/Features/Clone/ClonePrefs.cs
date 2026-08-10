@@ -18,11 +18,18 @@ public enum CloneLayout
 /// store is in-memory (so a folder chosen once would be forgotten on restart), and a raw SQLite
 /// backup then carries it along with the accounts it belongs to. Single row, fixed id.
 /// </summary>
+/// <param name="InitialBranch">
+/// The branch a freshly cloned repo is left on. Null (the default) means each repo's own default
+/// branch, and so does a name a given repo doesn't have — a preference for "develop" across the
+/// board shouldn't fail the clone of a repo that never had one. Only ever applies to a first
+/// clone; an existing working copy stays on whatever branch the user put it on.
+/// </param>
 public sealed record ClonePrefs(
     string Id,
     string? RootDirectory = null,
     CloneLayout Layout = CloneLayout.OwnerAndName,
-    DateTimeOffset? LastRunUtc = null)
+    DateTimeOffset? LastRunUtc = null,
+    string? InitialBranch = null)
 {
     public const string DefaultId = "default";
 

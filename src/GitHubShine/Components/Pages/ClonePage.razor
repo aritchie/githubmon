@@ -14,8 +14,8 @@
             <h1>Clone</h1>
             <span class="subtitle">
                 Keep local working copies of the repos you monitor. A repo that isn't in the folder yet
-                is cloned on its default branch; one that's already there is fast-forwarded on whatever
-                branch it's currently on — unless it has uncommitted changes, in which case it's left alone.
+                is cloned; one that's already there is fast-forwarded on whatever branch it's currently
+                on — unless it has uncommitted changes, in which case it's left alone.
             </span>
         </div>
     </div>
@@ -37,7 +37,7 @@
                 <span class="@(HasRoot ? "" : "muted")" style="flex:1; overflow-wrap:anywhere;">
                     @(HasRoot ? prefs.RootDirectory : "No folder chosen yet")
                 </span>
-                <button class="btn" @onclick="ChooseFolderAsync" disabled="@isBusy">
+                <button class="btn" @onclick="ChooseFolderAsync" disabled="@IsLocked">
                     @(HasRoot ? "Change…" : "Choose folder…")
                 </button>
             </div>
@@ -45,7 +45,7 @@
 
         <div class="field">
             <label>Folder layout</label>
-            <select value="@prefs.Layout" @onchange="OnLayoutChangedAsync" disabled="@isBusy">
+            <select value="@prefs.Layout" @onchange="OnLayoutChangedAsync" disabled="@IsLocked">
                 <option value="@CloneLayout.OwnerAndName">Group by owner — &lt;folder&gt;/owner/repo</option>
                 <option value="@CloneLayout.NameOnly">Flat — &lt;folder&gt;/repo</option>
             </select>
@@ -68,6 +68,23 @@
                 }
             </div>
         </div>
+
+        <div class="field">
+            <label>Initial branch for new clones</label>
+            <input list="clone-branch-suggestions" placeholder="Each repository's default branch"
+                   value="@prefs.InitialBranch" @onchange="OnInitialBranchChangedAsync" disabled="@IsLocked" />
+            <datalist id="clone-branch-suggestions">
+                @foreach (var name in KnownBranches)
+                {
+                    <option value="@name"></option>
+                }
+            </datalist>
+            <div class="hint">
+                Only applies the first time a repo is cloned — one that's already here stays on the branch
+                it's on, which you can change per repo below. A repo with no branch of this name is cloned
+                on its own default instead.
+            </div>
+        </div>
     </div>
 
     @if (rows.Count == 0)
@@ -81,63 +98,113 @@
     {
         <div class="card">
             <div class="repo-pick-toolbar">
-                <button class="btn" @onclick="SelectAll" disabled="@isBusy">Select all</button>
-                <button class="btn" @onclick="ClearAll" disabled="@isBusy">Clear</button>
-                <span class="muted">
-                    @SelectedCount of @rows.Count selected
-                    @if (prefs.LastRunUtc is { } last)
-                    {
-                        <text> · last run @last.ToLocalTime().ToString("g")</text>
-                    }
-                </span>
+                <button class="btn" @onclick="SelectAll" disabled="@IsLocked">Select all</button>
+                <button class="btn" @onclick="ClearAll" disabled="@IsLocked">Clear</button>
+                <button class="btn" @onclick="SelectOutOfDate" disabled="@(IsLocked || OutOfDateCount == 0)">
+                    Select out of date@(OutOfDateCount > 0 ? $" ({OutOfDateCount})" : "")
+                </button>
                 <span class="spacer" style="flex:1;"></span>
-                @if (isBusy)
+                @if (isBusy || isScanning)
                 {
                     <span class="spinner"></span>
                     <button class="btn danger" @onclick="Cancel">Cancel</button>
                 }
                 else
                 {
+                    <button class="btn" @onclick="() => ScanAsync(fetchRemote: true)" disabled="@(!HasRoot || gitMissing)"
+                            title="Fetch every repo and recount how far behind each branch is. Changes nothing on disk.">
+                        Check for updates
+                    </button>
                     <button class="btn primary" @onclick="RunAsync" disabled="@(SelectedCount == 0)">
                         Clone / update @SelectedCount repo@(SelectedCount == 1 ? "" : "s")…
                     </button>
                 }
             </div>
 
-            @if (isBusy)
-            {
-                <div class="hint" style="margin-bottom:8px;">
-                    <span class="spinner"></span> @doneCount of @totalToRun done…
-                </div>
-            }
+            <div class="hint" style="margin-bottom:8px;">
+                @if (isBusy)
+                {
+                    <text>@doneCount of @totalToRun done…</text>
+                }
+                else if (isScanning)
+                {
+                    <text>Checking @scanDone of @scanTotal…</text>
+                }
+                else
+                {
+                    <text>@SelectedCount of @rows.Count selected</text>
+                    @* Only worth saying once there's a count on screen that could be stale — with
+                       nothing cloned yet, every row reads "Not cloned" and no fetch would change that. *@
+                    @if (rows.Any(r => r.Status is { Kind: CloneStatusKind.Tracking }))
+                    {
+                        @if (lastScanFetched)
+                        {
+                            <text> · counts are live as of the last check</text>
+                        }
+                        else
+                        {
+                            <text> · counts are from each repo's last fetch — use "Check for updates" to refresh them</text>
+                        }
+                    }
+                    @if (prefs.LastRunUtc is { } last)
+                    {
+                        <text> · last run @last.ToLocalTime().ToString("g")</text>
+                    }
+                }
+            </div>
 
             <div class="repo-pick-list">
                 @foreach (var row in rows)
                 {
-                    <label class="repo-pick-row clone-row" @key="row.Key">
-                        <input type="checkbox" checked="@row.Selected" disabled="@isBusy"
-                               @onchange="e => row.Selected = (bool)e.Value!" />
-                        <span class="name">@row.Repo.FullName</span>
-                        <span class="desc" title="@RowDetail(row)">@RowDetail(row)</span>
-                        @* Visibility comes off the poller's cached snapshot — this page never calls
-                           the API itself, so it stays blank until a poll has landed. *@
-                        <VisibilityPill IsPrivate="Cache.TryGet(row.Account.Id, row.Repo)?.Private" />
-                        <span class="badge">
-                            @if (row.State == RunState.Running)
+                    <div class="repo-pick-row clone-row" @key="row.Key">
+                        <div class="clone-main">
+                            <label class="clone-pick">
+                                <input type="checkbox" checked="@row.Selected" disabled="@IsLocked"
+                                       @onchange="e => row.Selected = (bool)e.Value!" />
+                                <span class="name">@row.Repo.FullName</span>
+                            </label>
+                            @* Visibility comes off the poller's cached snapshot — this page never calls
+                               the API itself, so it stays blank until a poll has landed. *@
+                            <VisibilityPill IsPrivate="Cache.TryGet(row.Account.Id, row.Repo)?.Private" />
+                            <span class="badge">
+                                @if (row.Busy)
+                                {
+                                    <span class="spinner"></span>
+                                }
+                                else
+                                {
+                                    @foreach (var pill in PillsFor(row))
+                                    {
+                                        <span title="@pill.Title"><Pill Text="@pill.Text" Type="@pill.Type" /></span>
+                                    }
+                                }
+                            </span>
+                        </div>
+                        <div class="clone-sub">
+                            @if (row.Status is { Branches.Count: > 0 } branched)
                             {
-                                <span class="spinner"></span>
+                                <select class="branch-select" @key="row.BranchSelectKey"
+                                        value="@(branched.Branch ?? "")"
+                                        @onchange="e => SwitchBranchAsync(row, e.Value?.ToString())"
+                                        disabled="@(IsLocked || row.Busy)"
+                                        title="Check a different branch out in this working copy">
+                                    @if (branched.Branch is null)
+                                    {
+                                        <option value="">(detached HEAD)</option>
+                                    }
+                                    @foreach (var branch in branched.Branches)
+                                    {
+                                        <option value="@branch.Name">@(branch.RemoteOnly ? $"{branch.Name} — remote" : branch.Name)</option>
+                                    }
+                                </select>
                             }
-                            else if (row.State == RunState.Failed)
+                            else if (row.Status is { Kind: CloneStatusKind.NotCloned })
                             {
-                                <span title="@row.Message"><Pill Text="Failed" Type="PillType.Critical" /></span>
+                                <span class="muted branch-static">→ @(prefs.InitialBranch ?? "default branch")</span>
                             }
-                            else if (row.Outcome is { } outcome)
-                            {
-                                var pill = PillFor(outcome.Action);
-                                <span title="@outcome.Summary"><Pill Text="@pill.Text" Type="@pill.Type" /></span>
-                            }
-                        </span>
-                    </label>
+                            <span class="desc" title="@RowTitle(row)">@RowDetail(row)</span>
+                        </div>
+                    </div>
                 }
             </div>
 
@@ -160,17 +227,42 @@
 
     sealed class CloneRow(MonitoredAccount account, MonitoredRepo repo)
     {
+        int revision;
+
         public MonitoredAccount Account { get; } = account;
         public MonitoredRepo Repo { get; } = repo;
         public string Key => $"{this.Account.Id}|{this.Repo.FullName}";
         public bool Selected { get; set; } = true;
         public RunState State { get; set; }
 
+        /// <summary>What the working copy looks like, or null before it has been read.</summary>
+        public CloneStatus? Status { get; private set; }
+
+        /// <summary>Why the last read of this working copy failed, when it did.</summary>
+        public string? StatusError { get; set; }
+
         /// <summary>What the last run did to this working copy, or null before it has run.</summary>
         public CloneOutcome? Outcome { get; set; }
 
         /// <summary>The failure text when <see cref="State"/> is Failed.</summary>
         public string? Message { get; set; }
+
+        /// <summary>This row alone is being read or switched, as opposed to the whole page being busy.</summary>
+        public bool Busy { get; set; }
+
+        /// <summary>
+        /// Rekeys the branch picker whenever the status is replaced. A &lt;select&gt; is an
+        /// uncontrolled element: once the browser has moved it to the option the user clicked,
+        /// re-rendering the same bound value doesn't move it back, so a switch that was refused
+        /// would leave the picker showing a branch the repo isn't on. A new key rebuilds it.
+        /// </summary>
+        public string BranchSelectKey => $"{this.Key}|{this.revision}";
+
+        public void SetStatus(CloneStatus? status)
+        {
+            this.Status = status;
+            this.revision++;
+        }
     }
 
     readonly List<CloneRow> rows = new();
@@ -181,14 +273,35 @@
 
     ClonePrefs prefs = ClonePrefs.Default;
     bool isBusy;
+    bool isScanning;
     bool gitMissing;
     string gitMessage = "";
     int doneCount;
     int totalToRun;
+    int scanDone;
+    int scanTotal;
+    bool lastScanFetched;
+    bool initialScanDone;
     CancellationTokenSource? cts;
 
     bool HasRoot => !string.IsNullOrWhiteSpace(prefs.RootDirectory);
+
+    /// <summary>Whether the controls that would disturb a pass in flight are disabled.</summary>
+    bool IsLocked => isBusy || isScanning;
+
     int SelectedCount => rows.Count(r => r.Selected);
+    int OutOfDateCount => rows.Count(r => r.Status is { NeedsUpdate: true });
+
+    /// <summary>
+    /// Branch names seen across the working copies already on disk, offered as suggestions for the
+    /// initial-branch box. It's the closest thing to a list of "branches you actually use" that
+    /// costs nothing — enumerating branches for uncloned repos would be an API call each.
+    /// </summary>
+    IEnumerable<string> KnownBranches => rows
+        .Where(r => r.Status is not null)
+        .SelectMany(r => r.Status!.Branches.Select(b => b.Name))
+        .Distinct(StringComparer.Ordinal)
+        .OrderBy(n => n, StringComparer.OrdinalIgnoreCase);
 
     protected override async Task OnInitializedAsync()
     {
@@ -206,6 +319,21 @@
             gitMissing = true;
             gitMessage = ex.Message;
         }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        // Not gated on firstRender: an async OnInitializedAsync renders once before it has finished,
+        // so the first render can arrive with no prefs and no rows and there'd be nothing to scan.
+        // This waits for the render that has them, and the flag keeps it to one pass.
+        if (initialScanDone || !HasRoot || gitMissing || rows.Count == 0)
+            return;
+
+        // The local read is fast and touches nothing, so the page arrives already showing which
+        // branch each working copy is on rather than making the user ask. Counts come from the last
+        // fetch until "Check for updates" is pressed; the hint above the list says so.
+        initialScanDone = true;
+        await ScanAsync(fetchRemote: false);
     }
 
     void Rebuild()
@@ -233,23 +361,105 @@
     void OnConfigChanged(object? sender, EventArgs e)
         => _ = InvokeAsync(() =>
         {
-            if (!isBusy)
+            if (!IsLocked)
             {
                 Rebuild();
                 StateHasChanged();
             }
         });
 
-    /// <summary>What the row's second column says: the result once it has run, the destination before.</summary>
+    /// <summary>What the row's second line says: the result of a run, else what's on disk.</summary>
     string RowDetail(CloneRow row)
     {
         if (row.State == RunState.Failed)
             return row.Message ?? "Failed";
         if (row.Outcome is { } outcome)
             return outcome.Summary;
+        if (row.StatusError is { } error)
+            return error;
+        if (row.Status is { } status)
+            return status.Detail;
         if (!HasRoot)
             return row.Account.Label;
         return $"{row.Account.Label} · {Engine.ResolvePath(prefs.RootDirectory!, row.Repo, prefs.Layout)}";
+    }
+
+    /// <summary>The destination path, which the second line rarely has room to spell out.</summary>
+    string RowTitle(CloneRow row)
+    {
+        var detail = RowDetail(row);
+        if (!HasRoot)
+            return detail;
+
+        var path = row.Status?.Path ?? Engine.ResolvePath(prefs.RootDirectory!, row.Repo, prefs.Layout);
+        return $"{row.Account.Label} · {path}\n{detail}";
+    }
+
+    /// <summary>
+    /// The row's badges, in the order they matter: what the last run did to it, then how its branch
+    /// stands against the remote. Ahead, behind and dirty are not alternatives — a branch is
+    /// routinely two of the three, and each one changes what a run will do.
+    /// </summary>
+    IEnumerable<(string Text, PillType Type, string Title)> PillsFor(CloneRow row)
+    {
+        // What just happened to it, then — still, because the two answer different questions —
+        // where that leaves it. A clone that failed is also a repo that is still N behind.
+        if (row.State == RunState.Failed)
+        {
+            yield return ("Failed", PillType.Critical, row.Message ?? "Failed");
+        }
+        else if (row.Outcome is { } outcome)
+        {
+            var (text, type) = PillFor(outcome.Action);
+            yield return (text, type, outcome.Summary);
+        }
+
+        if (row.StatusError is { } error)
+        {
+            yield return ("Unreadable", PillType.Critical, error);
+            yield break;
+        }
+
+        if (row.Status is not { } status)
+            yield break;
+
+        switch (status.Kind)
+        {
+            case CloneStatusKind.NotCloned:
+                // Redundant next to a badge from the run that just tried to create it.
+                if (row.Outcome is null && row.State != RunState.Failed)
+                    yield return ("Not cloned", PillType.Info, status.Detail);
+                yield break;
+
+            case CloneStatusKind.NotARepo:
+            case CloneStatusKind.NoRemote:
+            case CloneStatusKind.DifferentRepo:
+                yield return ("Unusable", PillType.Critical, status.Detail);
+                yield break;
+
+            case CloneStatusKind.Detached:
+                yield return ("Detached", PillType.Warning, status.Detail);
+                break;
+
+            case CloneStatusKind.NoUpstream:
+                yield return ("Local only", PillType.Warning, status.Detail);
+                break;
+        }
+
+        if (status.Behind > 0)
+            yield return ($"{status.Behind} behind", PillType.Warning, status.Detail);
+
+        if (status.Ahead > 0)
+            yield return ($"{status.Ahead} ahead", PillType.Info, status.Detail);
+
+        if (status.Modified > 0)
+            yield return ($"{status.Modified} uncommitted", PillType.Caution, status.Detail);
+
+        // Suppressed next to a badge from a run, which already says what became of this repo —
+        // "Updated" followed by "Up to date" reads like two different answers.
+        if (row.Outcome is null && row.State != RunState.Failed &&
+            status is { Kind: CloneStatusKind.Tracking, Behind: 0, Ahead: 0, Modified: 0 })
+            yield return ("Up to date", PillType.Success, status.Detail);
     }
 
     static (string Text, PillType Type) PillFor(CloneAction action) => action switch
@@ -265,6 +475,9 @@
     void ClearAll() => rows.ForEach(r => r.Selected = false);
     void Cancel() => cts?.Cancel();
 
+    /// <summary>Ticks exactly the repos with something to collect, and unticks everything else.</summary>
+    void SelectOutOfDate() => rows.ForEach(r => r.Selected = r.Status is { NeedsUpdate: true });
+
     async Task ChooseFolderAsync()
     {
         var folder = await FileDialogs.PickFolderAsync();
@@ -273,6 +486,9 @@
 
         prefs = prefs with { RootDirectory = folder };
         await Store.SaveAsync(prefs);
+
+        // Everything read from the old folder describes somewhere else now.
+        await RescanAfterDestinationChangeAsync();
     }
 
     async Task OnLayoutChangedAsync(ChangeEventArgs e)
@@ -281,14 +497,162 @@
             ? value
             : CloneLayout.OwnerAndName;
 
+        if (layout == prefs.Layout)
+            return;
+
         prefs = prefs with { Layout = layout };
         await Store.SaveAsync(prefs);
+        await RescanAfterDestinationChangeAsync();
+    }
+
+    async Task OnInitialBranchChangedAsync(ChangeEventArgs e)
+    {
+        var branch = e.Value?.ToString()?.Trim();
+        var value = string.IsNullOrEmpty(branch) ? null : branch;
+        if (string.Equals(value, prefs.InitialBranch, StringComparison.Ordinal))
+            return;
+
+        prefs = prefs with { InitialBranch = value };
+        await Store.SaveAsync(prefs);
+    }
+
+    async Task RescanAfterDestinationChangeAsync()
+    {
+        foreach (var row in rows)
+        {
+            row.SetStatus(null);
+            row.StatusError = null;
+            row.Outcome = null;
+            row.State = RunState.Idle;
+        }
+
+        await ScanAsync(fetchRemote: false);
+    }
+
+    /// <summary>
+    /// Reads every working copy. Local-only by default, which costs nothing and is what the page
+    /// does on arrival; <paramref name="fetchRemote"/> contacts each remote so the behind counts
+    /// are current. Either way nothing on disk is changed.
+    /// </summary>
+    async Task ScanAsync(bool fetchRemote)
+    {
+        if (IsLocked || gitMissing || !HasRoot || rows.Count == 0)
+            return;
+
+        var root = prefs.RootDirectory!;
+        cts = new CancellationTokenSource();
+        isScanning = true;
+        scanDone = 0;
+        scanTotal = rows.Count;
+        StateHasChanged();
+
+        try
+        {
+            // Sequential for the same reason the run is: a fetching scan is one network round-trip
+            // per repo, and running them all at once only contends for the same connection.
+            foreach (var row in rows)
+            {
+                cts.Token.ThrowIfCancellationRequested();
+                row.Busy = true;
+                StateHasChanged();
+
+                try
+                {
+                    row.SetStatus(await Engine.GetStatusAsync(
+                        row.Account, row.Repo, root, prefs.Layout, fetchRemote, null, cts.Token));
+                    row.StatusError = null;
+                }
+                catch (OperationCanceledException)
+                {
+                    row.Busy = false;
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    row.SetStatus(null);
+                    row.StatusError = ex.Message;
+                }
+
+                row.Busy = false;
+                scanDone++;
+                StateHasChanged();
+            }
+
+            lastScanFetched = fetchRemote;
+        }
+        catch (OperationCanceledException)
+        {
+            // Whatever was read before the cancel stays on screen; the rest simply has no status.
+        }
+        finally
+        {
+            isScanning = false;
+            cts?.Dispose();
+            cts = null;
+            StateHasChanged();
+        }
+    }
+
+    /// <summary>Checks a different branch out in one working copy.</summary>
+    async Task SwitchBranchAsync(CloneRow row, string? branch)
+    {
+        if (IsLocked || row.Busy || string.IsNullOrWhiteSpace(branch))
+            return;
+
+        if (row.Status is not { } status || string.Equals(status.Branch, branch, StringComparison.Ordinal))
+            return;
+
+        row.Busy = true;
+
+        // Whatever the last run said about this row described the branch it was on before, so it
+        // stops being the answer the moment a switch is attempted — including one that's refused,
+        // where "Fast-forwarded main" sitting under a repo still on another branch reads as a lie.
+        row.Outcome = null;
+        row.Message = null;
+        row.State = RunState.Idle;
+        StateHasChanged();
+
+        try
+        {
+            row.SetStatus(await Engine.SwitchBranchAsync(
+                row.Account, row.Repo, prefs.RootDirectory!, prefs.Layout, branch!));
+            row.StatusError = null;
+
+            await Toast.SuccessAsync($"{row.Repo.FullName} is now on {branch}");
+        }
+        catch (Exception ex)
+        {
+            // On the row as well as in a toast: a toast is gone in seconds, and the reason a repo
+            // is still on the branch it was on is exactly what the user will look for afterwards.
+            row.State = RunState.Failed;
+            row.Message = ex.Message;
+            await Toast.DangerAsync(ex.Message);
+
+            // Re-read rather than keeping the stale status: the switch may have failed part-way,
+            // and this is also what snaps the picker back off the branch that wasn't taken.
+            try
+            {
+                row.SetStatus(await Engine.GetStatusAsync(
+                    row.Account, row.Repo, prefs.RootDirectory!, prefs.Layout, fetchRemote: false));
+                row.StatusError = null;
+            }
+            catch (Exception readEx)
+            {
+                row.SetStatus(null);
+                row.StatusError = readEx.Message;
+            }
+        }
+        finally
+        {
+            row.Busy = false;
+            StateHasChanged();
+        }
     }
 
     async Task RunAsync()
     {
         var targets = rows.Where(r => r.Selected).ToList();
-        if (isBusy || targets.Count == 0)
+        if (IsLocked || targets.Count == 0)
             return;
 
         // First run of all: no folder has been picked yet, so ask for one rather than making the
@@ -326,6 +690,7 @@
             {
                 cts.Token.ThrowIfCancellationRequested();
                 row.State = RunState.Running;
+                row.Busy = true;
                 StateHasChanged();
 
                 var progress = new Progress<string>(line =>
@@ -337,7 +702,7 @@
                 try
                 {
                     var outcome = await Engine.CloneOrUpdateAsync(
-                        row.Account, row.Repo, root, prefs.Layout, progress, cts.Token);
+                        row.Account, row.Repo, root, prefs.Layout, prefs.InitialBranch, progress, cts.Token);
 
                     row.Outcome = outcome;
                     row.State = RunState.Done;
@@ -350,6 +715,7 @@
                 catch (OperationCanceledException)
                 {
                     row.State = RunState.Idle;
+                    row.Busy = false;
                     throw;
                 }
                 catch (Exception ex)
@@ -360,6 +726,7 @@
                     failures++;
                 }
 
+                row.Busy = false;
                 doneCount++;
                 StateHasChanged();
             }
@@ -386,6 +753,12 @@
             cts = null;
             StateHasChanged();
         }
+
+        // The run just fetched everything it touched, so re-reading locally is both free and exact:
+        // branches that moved, counts that went to zero, and any repo that is now cloned. It stays
+        // a local read, and lastScanFetched stays false, because a run covers only what was ticked —
+        // the rows that sat it out really are as stale as they were.
+        await ScanAsync(fetchRemote: false);
     }
 
     string Summarise(int changed, int skipped, int failures)

@@ -589,10 +589,29 @@ input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px;
 .repo-pick-row .name { flex-shrink: 0; }
 .repo-pick-row .badge { margin-left: auto; flex-shrink: 0; }
 
-/* The clone list's second column is a full destination path, which is routinely wider than the
-   row. .desc already ellipsizes; min-width:0 is what actually lets a flex item shrink below its
-   content width, without which the path would push the badges off the end of the row. */
+/* A clone row carries more than a pick list's: a branch picker and an ahead/behind read-out as
+   well as the destination path. One line can't hold them, so it stacks — identity and status on
+   top, the branch and where it lives on a quieter second line. The row itself is no longer a
+   <label>, because a <select> inside one toggles the checkbox on every click. */
+.clone-row { flex-direction: column; align-items: stretch; gap: 4px; cursor: default; }
+.clone-row .clone-main { display: flex; align-items: center; gap: 10px; }
+.clone-row .clone-sub { display: flex; align-items: center; gap: 8px; padding-left: 24px; }
+.clone-row .clone-pick { display: flex; align-items: center; gap: 10px; cursor: pointer; }
+
+/* min-width:0 is what actually lets a flex item shrink below its content width; without it the
+   destination path would push the badges off the end of the row instead of ellipsizing. */
 .clone-row .desc { flex: 1 1 auto; min-width: 0; }
+.clone-row .badge { display: flex; align-items: center; gap: 6px; }
+.clone-row .branch-static { font-size: 12px; flex-shrink: 0; }
+
+.clone-row select.branch-select {
+    width: auto;
+    min-width: 130px;
+    max-width: 240px;
+    flex-shrink: 0;
+    padding: 1px 6px;
+    font-size: 12px;
+}
 
 .muted { color: var(--fg-muted); }
 .danger-text { color: var(--danger); }

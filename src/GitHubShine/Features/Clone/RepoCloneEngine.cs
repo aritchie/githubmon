@@ -9,16 +9,54 @@ public interface IRepoCloneEngine
     string ResolvePath(string rootDirectory, MonitoredRepo repo, CloneLayout layout);
 
     /// <summary>
+    /// Reads the working copy without changing anything: the branch it's on, the branches it could
+    /// be on, and how far the current one has drifted from its upstream.
+    /// </summary>
+    /// <param name="fetchRemote">
+    /// Whether to fetch first. False is entirely local and instant, but the counts are only as
+    /// fresh as the last fetch; true costs a round-trip and makes "behind" mean behind right now.
+    /// </param>
+    Task<CloneStatus> GetStatusAsync(
+        MonitoredAccount account,
+        MonitoredRepo repo,
+        string rootDirectory,
+        CloneLayout layout,
+        bool fetchRemote,
+        IProgress<string>? progress = null,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// Checks <paramref name="branch"/> out, creating a local tracking branch when it so far only
+    /// exists on a remote, and returns the working copy's state afterwards. Refuses (rather than
+    /// stashing or discarding) when tracked files have been modified.
+    /// </summary>
+    Task<CloneStatus> SwitchBranchAsync(
+        MonitoredAccount account,
+        MonitoredRepo repo,
+        string rootDirectory,
+        CloneLayout layout,
+        string branch,
+        IProgress<string>? progress = null,
+        CancellationToken ct = default);
+
+    /// <summary>
     /// Clones <paramref name="repo"/> into <paramref name="rootDirectory"/> when it isn't there yet,
     /// or brings an existing working copy up to date with whatever branch it is currently on.
     /// Never merges, rebases or discards anything: a working copy with local changes, local-only
     /// commits or a diverged branch is reported and left exactly as it was.
     /// </summary>
+    /// <param name="initialBranch">
+    /// The branch a <em>fresh</em> clone should be left on. Null means the repo's own default, and
+    /// so does a name the repo doesn't have — a preference for "develop" shouldn't fail the clone
+    /// of a repo that never had one. Ignored for a working copy that already exists, which stays on
+    /// whatever branch the user put it on.
+    /// </param>
     Task<CloneOutcome> CloneOrUpdateAsync(
         MonitoredAccount account,
         MonitoredRepo repo,
         string rootDirectory,
         CloneLayout layout,
+        string? initialBranch = null,
         IProgress<string>? progress = null,
         CancellationToken ct = default);
 }
@@ -34,9 +72,13 @@ public interface IRepoCloneEngine
 /// else — is reported back and skipped. Losing a user's uncommitted work to a background "catch up"
 /// is not a trade worth making, and a merge or rebase is a decision only they can take.
 ///
-/// It is also the cheap path: updating reads the remote from the working copy's own <c>origin</c>
-/// and spends no API calls at all. Only a first clone needs the provider (for the clone URL and the
-/// default branch).
+/// Reading a working copy and acting on one are the same code path: <see cref="InspectAsync"/>
+/// produces a <see cref="CloneStatus"/> and <see cref="ApplyAsync"/> decides what that state
+/// permits, so the badge the UI shows and the decision a run makes can't drift apart.
+///
+/// It is also the cheap path: everything except a first clone reads the remote from the working
+/// copy's own config and spends no API calls at all. Only a first clone needs the provider (for the
+/// clone URL and the default branch).
 /// </summary>
 [Singleton]
 public sealed class RepoCloneEngine(
@@ -50,28 +92,39 @@ public sealed class RepoCloneEngine(
             ? Path.Combine(rootDirectory, Sanitize(repo.Name))
             : Path.Combine(rootDirectory, Sanitize(repo.Owner), Sanitize(repo.Name));
 
+    public async Task<CloneStatus> GetStatusAsync(
+        MonitoredAccount account,
+        MonitoredRepo repo,
+        string rootDirectory,
+        CloneLayout layout,
+        bool fetchRemote,
+        IProgress<string>? progress = null,
+        CancellationToken ct = default)
+    {
+        var path = this.Prepare(rootDirectory, repo, layout);
+        await git.EnsureAvailableAsync(ct).ConfigureAwait(false);
+        return await this.InspectAsync(account, repo, path, fetchRemote, progress, ct).ConfigureAwait(false);
+    }
+
     public async Task<CloneOutcome> CloneOrUpdateAsync(
         MonitoredAccount account,
         MonitoredRepo repo,
         string rootDirectory,
         CloneLayout layout,
+        string? initialBranch = null,
         IProgress<string>? progress = null,
         CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(rootDirectory))
-            throw new InvalidOperationException("Choose a folder to clone into first.");
-
+        var path = this.Prepare(rootDirectory, repo, layout);
         await git.EnsureAvailableAsync(ct).ConfigureAwait(false);
-
-        var path = this.ResolvePath(rootDirectory, repo, layout);
 
         // An empty folder counts as "not there yet" — git clone is happy to fill one in, and a
         // leftover empty directory shouldn't be the thing that stops a repo being cloned.
-        var exists = Directory.Exists(path) && Directory.EnumerateFileSystemEntries(path).Any();
+        if (IsEmpty(path))
+            return await this.CloneAsync(account, repo, path, initialBranch, progress, ct).ConfigureAwait(false);
 
-        return exists
-            ? await this.UpdateAsync(account, repo, path, progress, ct).ConfigureAwait(false)
-            : await this.CloneAsync(account, repo, path, progress, ct).ConfigureAwait(false);
+        var status = await this.InspectAsync(account, repo, path, fetchRemote: true, progress, ct).ConfigureAwait(false);
+        return await this.ApplyAsync(status, progress, ct).ConfigureAwait(false);
     }
 
     // ---- first clone ----
@@ -80,6 +133,7 @@ public sealed class RepoCloneEngine(
         MonitoredAccount account,
         MonitoredRepo repo,
         string path,
+        string? initialBranch,
         IProgress<string>? progress,
         CancellationToken ct)
     {
@@ -98,9 +152,10 @@ public sealed class RepoCloneEngine(
         if (!string.IsNullOrEmpty(parent))
             Directory.CreateDirectory(parent);
 
-        // No --branch: a plain clone checks out the remote's HEAD, which is the default branch by
-        // definition. Naming it explicitly would only add a way to fail — `git clone -b <name>` is
-        // fatal against a repo with no refs at all, which is exactly what a newly created repo is.
+        // No --branch even when one was asked for: `git clone -b <name>` is fatal against a repo
+        // that hasn't got it (and against one with no refs at all, which is exactly what a newly
+        // created repo is). A plain clone checks out the remote's HEAD, and the requested branch is
+        // switched to afterwards, where failing to find it is a note rather than a failed clone.
         // "--" so a repo or folder name that starts with a dash can't be read as an option.
         var args = new List<string> { "clone", "--", url, path };
 
@@ -112,7 +167,20 @@ public sealed class RepoCloneEngine(
         foreach (var line in Lines(result.StdErr).Concat(Lines(result.StdOut)))
             Report(progress, line);
 
-        var branch = string.IsNullOrWhiteSpace(info.DefaultBranch) ? null : info.DefaultBranch;
+        // The clone's actual HEAD, not the API's idea of the default branch — they agree in the
+        // normal case, and where they don't it's the working copy that's telling the truth.
+        var branch = await this.CurrentBranchAsync(path, ct).ConfigureAwait(false)
+            ?? (string.IsNullOrWhiteSpace(info.DefaultBranch) ? null : info.DefaultBranch);
+
+        if (!string.IsNullOrWhiteSpace(initialBranch) &&
+            !string.Equals(initialBranch, branch, StringComparison.Ordinal))
+        {
+            if (await this.TrySwitchAsync(path, initialBranch!, ct).ConfigureAwait(false))
+                branch = initialBranch;
+            else
+                Report(progress, $"No '{initialBranch}' branch on {repo.FullName} — left on {branch ?? "the default branch"}.");
+        }
+
         var summary = branch is null
             ? $"Cloned into {path}"
             : $"Cloned {branch} into {path}";
@@ -120,37 +188,45 @@ public sealed class RepoCloneEngine(
         return new CloneOutcome(CloneAction.Cloned, path, branch, 0, 0, summary);
     }
 
-    // ---- catch an existing working copy up ----
+    // ---- read a working copy ----
 
-    async Task<CloneOutcome> UpdateAsync(
+    /// <summary>
+    /// Everything that can be learned about a working copy without changing it. Structural problems
+    /// (not a repo, wrong repo) short-circuit; anything past those reports counts <em>and</em> the
+    /// reason it may not be movable, because "3 behind, 2 files uncommitted" is more use than
+    /// either half on its own.
+    /// </summary>
+    async Task<CloneStatus> InspectAsync(
         MonitoredAccount account,
         MonitoredRepo repo,
         string path,
+        bool fetchRemote,
         IProgress<string>? progress,
         CancellationToken ct)
     {
+        if (IsEmpty(path))
+            return CloneStatus.Plain(CloneStatusKind.NotCloned, path, "Not cloned yet.");
+
         // Tested by looking for .git in this exact folder rather than asking git: `rev-parse` walks
         // up, so a plain folder nested inside some other checkout would answer "yes, a work tree"
         // and we'd go on to fetch into its parent repo.
         var dotGit = Path.Combine(path, ".git");
         if (!Directory.Exists(dotGit) && !File.Exists(dotGit))
-            return Skip(CloneAction.SkippedNotARepo, path, null, progress,
+            return CloneStatus.Plain(CloneStatusKind.NotARepo, path,
                 $"{path} already exists but isn't a git working copy — move it aside or pick another folder.");
 
         var originResult = await this.TryGitAsync(path, ["remote", "get-url", "origin"], null, ct).ConfigureAwait(false);
         var origin = originResult.StdOut.Trim();
         if (!originResult.Success || origin.Length == 0)
-            return Skip(CloneAction.SkippedNoRemote, path, null, progress,
-                "Skipped — this working copy has no 'origin' remote to fetch from.");
+            return CloneStatus.Plain(CloneStatusKind.NoRemote, path,
+                "This working copy has no 'origin' remote to fetch from.");
 
         // A folder holding some other repo (easily done under the flat layout, where two owners'
         // repos of the same name land in one place) must not be fetched into.
         if (!RemoteMatches(origin, repo))
-            return Skip(CloneAction.SkippedDifferentRepo, path, null, progress,
-                $"Skipped — origin is {Redact(origin)}, not {repo.FullName}.");
+            return CloneStatus.Plain(CloneStatusKind.DifferentRepo, path,
+                $"origin is {Redact(origin)}, not {repo.FullName}.");
 
-        // Cheap and local, so it comes before the fetch: no point spending a round-trip on a
-        // working copy that can't be moved anyway.
         var status = await this.TryGitAsync(path, ["status", "--porcelain"], null, ct).ConfigureAwait(false);
         if (!status.Success)
             throw new InvalidOperationException($"git status failed: {status.Message}");
@@ -159,32 +235,23 @@ public sealed class RepoCloneEngine(
         var untracked = lines.Count(l => l.StartsWith("??", StringComparison.Ordinal));
         var modified = lines.Count - untracked;
 
-        // Untracked files deliberately do NOT block: they can't be lost to a fast-forward (git
-        // refuses one that would overwrite them), and treating build output as "uncommitted work"
-        // would permanently wedge most real checkouts.
-        if (modified > 0)
-            return Skip(CloneAction.SkippedDirty, path, null, progress,
-                $"Skipped — {modified} uncommitted change{(modified == 1 ? "" : "s")} to tracked files.");
-
-        if (untracked > 0)
-            Report(progress, $"{untracked} untracked file{(untracked == 1 ? "" : "s")} left alone.");
-
-        var head = await this.TryGitAsync(path, ["symbolic-ref", "--quiet", "--short", "HEAD"], null, ct).ConfigureAwait(false);
-        var branch = head.StdOut.Trim();
-        if (!head.Success || branch.Length == 0)
-            return Skip(CloneAction.SkippedDetached, path, null, progress,
-                "Skipped — HEAD isn't on a branch (detached), so there's nothing to fast-forward.");
+        var branch = await this.CurrentBranchAsync(path, ct).ConfigureAwait(false);
 
         // Whatever branch the working copy is on is followed to whatever it actually tracks, which
         // on a fork is often a second remote rather than origin. Fetching only origin there would
-        // compare against a stale ref and report "up to date" when it isn't.
-        var tracking = await this.TryGitAsync(path, ["config", "--get", $"branch.{branch}.remote"], null, ct).ConfigureAwait(false);
-        var remote = tracking.StdOut.Trim();
-        if (remote.Length == 0)
-            remote = "origin";
+        // compare against a stale ref and report "up to date" when it isn't. A detached HEAD has no
+        // such config, and origin is the only sensible guess.
+        var remote = "origin";
+        if (branch is not null)
+        {
+            var tracking = await this.TryGitAsync(path, ["config", "--get", $"branch.{branch}.remote"], null, ct).ConfigureAwait(false);
+            if (tracking.StdOut.Trim() is { Length: > 0 } configured)
+                remote = configured;
+        }
 
         // "." means the branch tracks another local branch — there is nothing to fetch.
-        if (remote != ".")
+        var fetched = false;
+        if (fetchRemote && remote != ".")
         {
             var remoteUrl = origin;
             if (!string.Equals(remote, "origin", StringComparison.Ordinal))
@@ -200,38 +267,265 @@ public sealed class RepoCloneEngine(
                 ? await this.TryCredentialAsync(account, null, ct).ConfigureAwait(false)
                 : null;
 
-            Report(progress, $"Fetching {remote} for {repo.FullName} ({branch})…");
+            Report(progress, $"Fetching {remote} for {repo.FullName}…");
             var fetch = await this.TryGitAsync(path, ["fetch", "--no-progress", "--prune", remote], credential, ct).ConfigureAwait(false);
             if (!fetch.Success)
                 throw new InvalidOperationException($"git fetch failed: {fetch.Message}");
+
+            fetched = true;
         }
+
+        // After the fetch, so a branch that has just appeared on the remote is offered.
+        var branches = await this.ListBranchesAsync(path, ct).ConfigureAwait(false);
+
+        if (branch is null)
+            return new CloneStatus(
+                CloneStatusKind.Detached, path, null, null, 0, 0, modified, untracked, branches, fetched,
+                Suffix("HEAD isn't on a branch (detached).", modified, untracked));
 
         var upstream = await this.ResolveUpstreamAsync(path, branch, remote, ct).ConfigureAwait(false);
         if (upstream is null)
-            return Skip(CloneAction.SkippedNoUpstream, path, branch, progress,
-                $"Skipped — '{branch}' is local only; there's no '{remote}/{branch}' to catch up to.");
+            return new CloneStatus(
+                CloneStatusKind.NoUpstream, path, branch, null, 0, 0, modified, untracked, branches, fetched,
+                Suffix($"'{branch}' is local only; there's no '{remote}/{branch}' to catch up to.", modified, untracked));
 
         var (ahead, behind) = await this.CountAsync(path, upstream, ct).ConfigureAwait(false);
 
-        if (behind == 0 && ahead == 0)
-            return Done(CloneAction.UpToDate, path, branch, 0, 0, progress, $"{branch} is already up to date.");
+        return new CloneStatus(
+            CloneStatusKind.Tracking, path, branch, upstream, ahead, behind, modified, untracked, branches, fetched,
+            Suffix(Describe(branch, upstream, ahead, behind), modified, untracked));
+    }
 
-        if (behind == 0)
-            return Done(CloneAction.AheadOnly, path, branch, ahead, 0, progress,
-                $"{branch} is {ahead} commit{(ahead == 1 ? "" : "s")} ahead of {upstream} — nothing to pull.");
+    /// <summary>Reads the current state as a sentence, before any "and it's dirty" qualifier.</summary>
+    static string Describe(string branch, string upstream, int ahead, int behind) => (ahead, behind) switch
+    {
+        (0, 0) => $"{branch} is up to date with {upstream}.",
+        (0, _) => $"{branch} is {Commits(behind)} behind {upstream}.",
+        (_, 0) => $"{branch} is {Commits(ahead)} ahead of {upstream}.",
+        _ => $"{branch} has diverged from {upstream} — {ahead} local, {behind} remote."
+    };
 
-        if (ahead > 0)
-            return Skip(CloneAction.SkippedDiverged, path, branch, progress,
-                $"Skipped — {branch} has diverged from {upstream} ({ahead} local, {behind} remote). Merge or rebase it yourself.");
+    static string Suffix(string detail, int modified, int untracked)
+    {
+        if (modified > 0)
+            detail += $" {modified} uncommitted change{(modified == 1 ? "" : "s")} to tracked files.";
+        if (untracked > 0)
+            detail += $" {untracked} untracked file{(untracked == 1 ? "" : "s")}.";
+        return detail;
+    }
+
+    // ---- act on what was read ----
+
+    /// <summary>
+    /// Turns an inspected state into the one thing that state permits. The only write it ever makes
+    /// is <c>merge --ff-only</c>, and only from strictly-behind-and-clean.
+    /// </summary>
+    async Task<CloneOutcome> ApplyAsync(CloneStatus status, IProgress<string>? progress, CancellationToken ct)
+    {
+        switch (status.Kind)
+        {
+            case CloneStatusKind.NotARepo:
+                return Skip(CloneAction.SkippedNotARepo, status, progress, status.Detail);
+
+            case CloneStatusKind.NoRemote:
+                return Skip(CloneAction.SkippedNoRemote, status, progress, $"Skipped — {Lower(status.Detail)}");
+
+            case CloneStatusKind.DifferentRepo:
+                return Skip(CloneAction.SkippedDifferentRepo, status, progress, $"Skipped — {Lower(status.Detail)}");
+        }
+
+        // Untracked files deliberately do NOT block: they can't be lost to a fast-forward (git
+        // refuses one that would overwrite them), and treating build output as "uncommitted work"
+        // would permanently wedge most real checkouts.
+        if (status.Modified > 0)
+            return Skip(CloneAction.SkippedDirty, status, progress,
+                $"Skipped — {status.Modified} uncommitted change{(status.Modified == 1 ? "" : "s")} to tracked files.");
+
+        if (status.Untracked > 0)
+            Report(progress, $"{status.Untracked} untracked file{(status.Untracked == 1 ? "" : "s")} left alone.");
+
+        switch (status.Kind)
+        {
+            case CloneStatusKind.Detached:
+                return Skip(CloneAction.SkippedDetached, status, progress,
+                    "Skipped — HEAD isn't on a branch (detached), so there's nothing to fast-forward.");
+
+            case CloneStatusKind.NoUpstream:
+                return Skip(CloneAction.SkippedNoUpstream, status, progress,
+                    $"Skipped — '{status.Branch}' is local only; there's no matching remote branch to catch up to.");
+        }
+
+        var branch = status.Branch!;
+        var upstream = status.Upstream!;
+
+        if (status.Behind == 0 && status.Ahead == 0)
+            return Done(CloneAction.UpToDate, status, 0, 0, progress, $"{branch} is already up to date.");
+
+        if (status.Behind == 0)
+            return Done(CloneAction.AheadOnly, status, status.Ahead, 0, progress,
+                $"{branch} is {Commits(status.Ahead)} ahead of {upstream} — nothing to pull.");
+
+        if (status.Ahead > 0)
+            return Skip(CloneAction.SkippedDiverged, status, progress,
+                $"Skipped — {branch} has diverged from {upstream} ({status.Ahead} local, {status.Behind} remote). Merge or rebase it yourself.");
 
         // Strictly behind and clean: --ff-only can only move the branch pointer forward, and fails
         // loudly rather than inventing a merge commit if that turns out not to be true.
-        var merge = await this.TryGitAsync(path, ["merge", "--ff-only", upstream], null, ct).ConfigureAwait(false);
+        var merge = await this.TryGitAsync(status.Path, ["merge", "--ff-only", upstream], null, ct).ConfigureAwait(false);
         if (!merge.Success)
             throw new InvalidOperationException($"git merge --ff-only failed: {merge.Message}");
 
-        return Done(CloneAction.Updated, path, branch, 0, behind, progress,
-            $"Fast-forwarded {branch} by {behind} commit{(behind == 1 ? "" : "s")}.");
+        return Done(CloneAction.Updated, status, 0, status.Behind, progress,
+            $"Fast-forwarded {branch} by {Commits(status.Behind)}.");
+    }
+
+    // ---- change branch ----
+
+    public async Task<CloneStatus> SwitchBranchAsync(
+        MonitoredAccount account,
+        MonitoredRepo repo,
+        string rootDirectory,
+        CloneLayout layout,
+        string branch,
+        IProgress<string>? progress = null,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(branch))
+            throw new InvalidOperationException("Choose a branch to switch to.");
+
+        var path = this.Prepare(rootDirectory, repo, layout);
+        await git.EnsureAvailableAsync(ct).ConfigureAwait(false);
+
+        // Local only: switching to a branch already in the working copy shouldn't need the network,
+        // and a branch the user picked came from a list this same read produced.
+        var before = await this.InspectAsync(account, repo, path, fetchRemote: false, progress, ct).ConfigureAwait(false);
+        if (!before.IsWorkingCopy)
+            throw new InvalidOperationException(before.Detail);
+
+        if (string.Equals(before.Branch, branch, StringComparison.Ordinal))
+            return before;
+
+        // git would refuse anything that overwrites a modified file anyway, but it would happily
+        // carry the rest across to the new branch — which is a surprise, not a feature, when the
+        // switch was one click on a list of twenty repos.
+        if (before.Modified > 0)
+            throw new InvalidOperationException(
+                $"{repo.FullName} has {before.Modified} uncommitted change{(before.Modified == 1 ? "" : "s")} — commit or stash them before switching branch.");
+
+        Report(progress, $"Switching {repo.FullName} to {branch}…");
+        if (!await this.TrySwitchAsync(path, branch, ct).ConfigureAwait(false))
+            throw new InvalidOperationException($"Couldn't switch {repo.FullName} to '{branch}' — no such branch locally or on a remote.");
+
+        var after = await this.InspectAsync(account, repo, path, fetchRemote: false, progress, ct).ConfigureAwait(false);
+        Report(progress, after.Detail);
+        return after;
+    }
+
+    /// <summary>
+    /// Checks <paramref name="branch"/> out, creating a local tracking branch from a remote when it
+    /// doesn't exist locally yet. False (rather than a throw) when no branch of that name exists at
+    /// all, which is a legitimate answer on the clone path.
+    /// </summary>
+    async Task<bool> TrySwitchAsync(string path, string branch, CancellationToken ct)
+    {
+        var local = await this
+            .TryGitAsync(path, ["rev-parse", "--verify", "--quiet", $"refs/heads/{branch}"], null, ct)
+            .ConfigureAwait(false);
+
+        if (local.Success && local.StdOut.Trim().Length > 0)
+        {
+            // --no-guess: with the branch known to exist locally there is nothing to infer, and it
+            // stops a typo from silently creating a branch off some remote.
+            var switched = await this.TryGitAsync(path, ["switch", "--no-guess", branch], null, ct).ConfigureAwait(false);
+            if (switched.Success)
+                return true;
+
+            throw new InvalidOperationException($"git switch failed: {switched.Message}");
+        }
+
+        var known = await this.ListBranchesAsync(path, ct).ConfigureAwait(false);
+        var remote = known.FirstOrDefault(b => string.Equals(b.Name, branch, StringComparison.Ordinal))?.Remote;
+        if (remote is null)
+            return false;
+
+        var created = await this
+            .TryGitAsync(path, ["switch", "--track", $"{remote}/{branch}"], null, ct)
+            .ConfigureAwait(false);
+
+        if (!created.Success)
+            throw new InvalidOperationException($"git switch --track failed: {created.Message}");
+
+        return true;
+    }
+
+    /// <summary>
+    /// Every branch this working copy could be switched to — local heads plus remote-tracking refs,
+    /// merged by name so a branch that exists both places appears once. <c>origin</c> wins when the
+    /// same name is on more than one remote, since that's the one a plain clone set up.
+    /// </summary>
+    async Task<IReadOnlyList<CloneBranch>> ListBranchesAsync(string path, CancellationToken ct)
+    {
+        var result = await this
+            .TryGitAsync(path, ["for-each-ref", "--format=%(refname)", "refs/heads", "refs/remotes"], null, ct)
+            .ConfigureAwait(false);
+
+        if (!result.Success)
+        {
+            logger.LogDebug("Couldn't list branches in {Path}: {Message}", path, result.Message);
+            return [];
+        }
+
+        var found = new Dictionary<string, CloneBranch>(StringComparer.Ordinal);
+
+        foreach (var line in Lines(result.StdOut))
+        {
+            if (line.StartsWith("refs/heads/", StringComparison.Ordinal))
+            {
+                var name = line["refs/heads/".Length..];
+                if (name.Length == 0)
+                    continue;
+
+                found[name] = found.TryGetValue(name, out var existing)
+                    ? existing with { Local = true }
+                    : new CloneBranch(name, Local: true, Remote: null);
+            }
+            else if (line.StartsWith("refs/remotes/", StringComparison.Ordinal))
+            {
+                // refs/remotes/<remote>/<branch>, where <branch> may itself contain slashes.
+                var rest = line["refs/remotes/".Length..];
+                var slash = rest.IndexOf('/');
+                if (slash <= 0)
+                    continue;
+
+                var remote = rest[..slash];
+                var name = rest[(slash + 1)..];
+
+                // refs/remotes/<remote>/HEAD is a symref to the remote's default branch, not a
+                // branch anyone can check out by that name.
+                if (name.Length == 0 || name == "HEAD")
+                    continue;
+
+                if (!found.TryGetValue(name, out var existing))
+                    found[name] = new CloneBranch(name, Local: false, Remote: remote);
+                else if (existing.Remote is null || (existing.Remote != "origin" && remote == "origin"))
+                    found[name] = existing with { Remote = remote };
+            }
+        }
+
+        return found.Values
+            .OrderBy(b => b.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    /// <summary>The checked-out branch, or null when HEAD is detached.</summary>
+    async Task<string?> CurrentBranchAsync(string path, CancellationToken ct)
+    {
+        var head = await this
+            .TryGitAsync(path, ["symbolic-ref", "--quiet", "--short", "HEAD"], null, ct)
+            .ConfigureAwait(false);
+
+        var branch = head.StdOut.Trim();
+        return head.Success && branch.Length > 0 ? branch : null;
     }
 
     /// <summary>
@@ -276,6 +570,19 @@ public sealed class RepoCloneEngine(
     }
 
     // ---- plumbing ----
+
+    /// <summary>Validates the root and resolves where this repo lives under it.</summary>
+    string Prepare(string rootDirectory, MonitoredRepo repo, CloneLayout layout)
+    {
+        if (string.IsNullOrWhiteSpace(rootDirectory))
+            throw new InvalidOperationException("Choose a folder to clone into first.");
+
+        return this.ResolvePath(rootDirectory, repo, layout);
+    }
+
+    /// <summary>Whether the destination has nothing in it — missing, or present but empty.</summary>
+    static bool IsEmpty(string path)
+        => !Directory.Exists(path) || !Directory.EnumerateFileSystemEntries(path).Any();
 
     Task<GitResult> TryGitAsync(string workingDir, IReadOnlyList<string> args, GitCredential? credential, CancellationToken ct)
     {
@@ -361,13 +668,19 @@ public sealed class RepoCloneEngine(
         return cleaned.Length == 0 || cleaned.All(c => c == '.') ? "-" : cleaned;
     }
 
-    static CloneOutcome Skip(CloneAction action, string path, string? branch, IProgress<string>? progress, string summary)
-        => Done(action, path, branch, 0, 0, progress, summary);
+    static string Commits(int count) => $"{count} commit{(count == 1 ? "" : "s")}";
 
-    static CloneOutcome Done(CloneAction action, string path, string? branch, int ahead, int behind, IProgress<string>? progress, string summary)
+    /// <summary>Folds a standalone sentence into the middle of a longer one.</summary>
+    static string Lower(string sentence)
+        => sentence.Length == 0 ? sentence : char.ToLowerInvariant(sentence[0]) + sentence[1..];
+
+    static CloneOutcome Skip(CloneAction action, CloneStatus status, IProgress<string>? progress, string summary)
+        => Done(action, status, 0, 0, progress, summary);
+
+    static CloneOutcome Done(CloneAction action, CloneStatus status, int ahead, int behind, IProgress<string>? progress, string summary)
     {
         Report(progress, summary);
-        return new CloneOutcome(action, path, branch, ahead, behind, summary);
+        return new CloneOutcome(action, status.Path, status.Branch, ahead, behind, summary);
     }
 
     static void Report(IProgress<string>? progress, string message) => progress?.Report(message);
