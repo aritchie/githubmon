@@ -21,6 +21,7 @@ GitHub Shine is organized into four tabs — **Dashboard**, **Accounts**, **Arch
 - **Drag-to-reorder** — arrange the dashboard cards by drag-and-drop (or the `‹ ›` buttons); your layout is persisted between sessions.
 - **"Needs your attention" inbox** — pulls your GitHub notifications and highlights the ones that matter: mentions, assignments, and requested reviews.
 - **Repository archive** — on the Archive tab, multi-select repos and download a source zip of each one's default branch into a folder of your choice, with per-repo progress, a Saved/Failed badge, and cancellation.
+- **Local clones** — on the Clone tab, pick a folder and keep real working copies of the repos you monitor. A repo that isn't there yet is cloned; one that already is gets fast-forwarded on whatever branch it's checked out on. Uncommitted changes, a detached HEAD or a diverged branch are reported and skipped rather than touched.
 - **Native notifications** — get notified about new issues, new pull requests, and failed workflow runs; mute them from the Settings tab or the tray menu.
 - **Tray menu with repo list** — a monochrome template tray icon whose menu opens the dashboard, refreshes, toggles mute, and lists your repositories (in the same order as the sidebar) — click one to open it on GitHub.
 - **Settings tab** — mute notifications, choose the repository sort order (shared by the sidebar and tray), set the refresh interval, and back up or restore the database.
@@ -90,6 +91,7 @@ src/GitHubShine/
 ├─ Features/
 │  ├─ Accounts/                 Account/repo config, secure token vault
 │  ├─ Archive/                  Bulk source-zip download of selected repos
+│  ├─ Clone/                    Local git working copies: first clone, then fast-forward
 │  ├─ Dashboard/                Snapshots, polling, Mediator handlers
 │  ├─ Settings/                 App settings, file dialogs, database backup/restore
 │  └─ Tray/                     System tray icon + repo menu

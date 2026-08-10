@@ -140,6 +140,7 @@ public static class MauiProgram
             options.MapTypeToTable<NotificationPrefs>();
             options.MapTypeToTable<SyncMapping>();
             options.MapTypeToTable<AutoSyncPrefs>();
+            options.MapTypeToTable<ClonePrefs>();
             options.MapTypeToTable<PollState>();
             options.MapTypeToTable<FollowedPerson>();
         });
