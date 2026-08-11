@@ -97,28 +97,31 @@
     {
         var rel = Nav.ToBaseRelativePath(Nav.Uri).Split('?', '#')[0].Trim('/');
 
+        // People sits next to Repositories rather than further down: the two grids are the pair of
+        // "what am I watching" screens and read as a group in the bar.
         var entries = new List<NavEntry>
         {
             new(DashboardIcon, "Dashboard", "Home", "/", rel.Length == 0),
             new(ReposIcon, "Repositories", "Repos", "/repos", IsSection(rel, "repos")),
+            new(PersonsIcon, "People", "People", "/persons", IsSection(rel, "persons")),
             new(AccountsIcon, "Accounts", "Accounts", "/accounts", IsSection(rel, "accounts")),
         };
-        // Archive isn't usable on phones, and Sync shells out to the git CLI which mobile
-        // doesn't have. People is left off there for a different reason: it works fine, but it
-        // would be the fifth tab, and the bar is already at the width where labels start to
-        // collide — so the mobile tab bar stays at the four that fit comfortably across a phone.
-        // (The /persons route still resolves on mobile; it just isn't in the tab bar.)
+
+        // Archive isn't usable on phones, and Sync is a desktop workflow (two accounts, a mapping
+        // list) that a phone-width page can't lay out — so those two stay off the tab bar. Clone
+        // does ship there: on mobile it needs no folder picker (see ClonePage) and clones into the
+        // app's own storage. Six tabs is the most a phone bar can seat legibly; anything more and
+        // the labels start to collide, so a seventh needs one of these to move rather than be added.
         if (!Platform.IsMobile)
-        {
-            // Inserted next to Repositories rather than appended: the two grids are the pair of
-            // "what am I watching" screens and read as a group in the bar.
-            entries.Insert(2, new(PersonsIcon, "People", "People", "/persons", IsSection(rel, "persons")));
             entries.Add(new(ArchiveIcon, "Archive", "Archive", "/archive", IsSection(rel, "archive")));
-            // Clone sits next to Archive: both take monitored repos and put them in a folder, one as
-            // a zip snapshot, the other as a live working copy you can keep catching up.
-            entries.Add(new(CloneIcon, "Clone", "Clone", "/clone", IsSection(rel, "clone")));
+
+        // Clone sits next to Archive on desktop: both take monitored repos and put them in a folder,
+        // one as a zip snapshot, the other as a live working copy you can keep catching up.
+        entries.Add(new(CloneIcon, "Clone", "Clone", "/clone", IsSection(rel, "clone")));
+
+        if (!Platform.IsMobile)
             entries.Add(new(SyncIcon, "Sync", "Sync", "/sync", IsSection(rel, "sync")));
-        }
+
         entries.Add(new(SettingsIcon, "Settings", "Settings", "/settings", IsSection(rel, "settings")));
 
         navEntries = entries;

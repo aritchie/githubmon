@@ -4,22 +4,19 @@ using Shiny.Jobs;
 namespace GitHubShine.Jobs;
 
 /// <summary>
-/// Brings the job manager to life at startup.
+/// Brings the job manager to life at startup, and reports whether the OS will actually run it.
 ///
-/// This is not optional plumbing — without it nothing runs. <c>AddJob</c> registers
-/// <see cref="IJobManager"/> as a singleton, and DI is lazy: if no one ever resolves it, it is
-/// never constructed, so its timer never starts and its platform schedulers are never registered.
-/// Normally Shiny's own hosting (<c>UseShiny()</c>) does that resolution during startup, but this
-/// app can't use it — Shiny.Hosting.Maui ships no net10.0-macos asset, which is why
-/// <c>Shiny.IPlatform</c> is hand-registered in MauiProgram too. Same gap, same fix.
+/// Resolving the manager is not optional plumbing — without it nothing runs. <c>AddJob</c>
+/// registers <see cref="IJobManager"/> as a singleton, and DI is lazy: if no one ever resolves it,
+/// it is never constructed, so its timer never starts and its platform schedulers are never
+/// registered. Found by running the desktop head and noticing the jobs never logged: the only
+/// thing touching the poll state was the config-change handler.
 ///
-/// Found by running the desktop head and noticing the jobs never logged: the only thing touching
-/// the poll state was the config-change handler.
-///
-/// <see cref="AbstractJobManager.RequestAccess"/> is what asks the OS for background execution —
-/// on iOS it registers the BGTaskScheduler identifiers declared in Info.plist, and returns
-/// <c>NotSetup</c> when that declaration is missing, which is worth logging loudly because the
-/// symptom otherwise is simply "notifications stopped when the app was closed".
+/// <see cref="AbstractJobManager.RequestAccess"/> is what reports whether background execution is
+/// available — on iOS it answers <c>NotSetup</c> when the BGTaskScheduler declaration in
+/// Info.plist is missing, which is worth logging loudly because the symptom otherwise is simply
+/// "notifications stopped when the app was closed". It only reads state, so it is safe to call
+/// from anywhere at any time.
 /// </summary>
 public sealed class JobStartupService(
     IJobManager jobs,
@@ -30,13 +27,27 @@ public sealed class JobStartupService(
         {
             try
             {
+#if !(ANDROID || IOS || WINDOWS)
                 // The actual start. Shiny.Jobs' JobManager implements IShinyStartupTask, and its
-                // Start() is what arms the recurring timer that runs foreground jobs — normally
-                // invoked by Shiny's hosting, which this app doesn't use. Resolving the manager
-                // alone constructs it but leaves it idle: the jobs log "registered" and then
-                // nothing ever fires. Verified by running the desktop head before and after.
+                // Start() is what arms the recurring timer that runs foreground jobs. Resolving the
+                // manager alone constructs it but leaves it idle: the jobs log "registered" and
+                // then nothing ever fires. Verified by running the desktop head before and after.
+                //
+                // ONLY on the labs macOS/Linux heads. Everywhere else MauiProgram calls UseShiny(),
+                // whose ShinyMauiInitializationService runs Host.Run() — and that already invokes
+                // Start() on every IShinyStartupTask, on the UI thread, inside FinishedLaunching.
+                // Calling it a second time from here is not merely redundant: on iOS, Start()
+                // registers the four BGTaskScheduler identifiers, and Apple requires every launch
+                // handler to be registered *before the app finishes launching*. This call arrives
+                // on a thread-pool thread some time after that, so the second registration both
+                // duplicates an existing identifier and breaks that contract.
+                //
+                // It goes unnoticed on the simulator because iOS JobManager.Start() opens with
+                // `if (Runtime.Arch == Arch.SIMULATOR) return;` — the whole method is a no-op
+                // there, so only a physical device ever executes any of it.
                 if (jobs is IShinyStartupTask startup)
                     startup.Start();
+#endif
 
                 var registered = jobs.GetJobs();
                 logger.LogInformation(

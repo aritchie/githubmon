@@ -137,6 +137,14 @@ main.has-tabbar { padding-bottom: 0; }
     white-space: nowrap;
 }
 
+/* Six tabs across a small phone leaves ~50px each, which is under the width of
+   "Accounts"/"Settings" at 11px — so the narrowest screens get a slightly smaller
+   icon and label rather than two ellipsized labels. */
+@media (max-width: 380px) {
+    .tabbar-item { font-size: 10px; padding: 6px 1px; gap: 1px; }
+    .tabbar-icon { width: 22px; height: 22px; }
+}
+
 /* ---------- Page scaffolding ---------- */
 
 .page { padding: 24px; max-width: 1280px; margin: 0 auto; }

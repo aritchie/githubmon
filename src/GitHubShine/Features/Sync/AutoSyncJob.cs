@@ -13,14 +13,15 @@ namespace GitHubShine.Sync;
 /// change is the retry back-off, which used to be a field — see
 /// <see cref="AutoSyncPrefs.RetryAfterUtc"/>.
 ///
-/// Still desktop-only: a sync shells out to the git CLI, which mobile doesn't have. It's
-/// registered under <c>!MOBILE</c> in MauiProgram, so on a phone this job doesn't exist.
+/// Still desktop-only, though no longer for want of git: syncing is a desktop workflow (two
+/// accounts and a mapping list, none of which the phone UI offers), so it stays registered under
+/// <c>!MOBILE</c> in MauiProgram and on a phone this job doesn't exist.
 /// </summary>
 public sealed class AutoSyncJob(
     IConfigStore config,
     ISyncStore syncStore,
     IRepoSyncEngine engine,
-    IGitCli git,
+    IGitRuntime git,
     IGitProviderFactory factory,
     SnapshotCache snapshots,
     SyncGate gate,
@@ -91,7 +92,8 @@ public sealed class AutoSyncJob(
         }
         catch (GitUnavailableException ex)
         {
-            // Installing git isn't going to happen in the next few minutes — check back in an hour.
+            // A native that won't load won't start loading in the next few minutes — check back in
+            // an hour rather than spinning on it.
             logger.LogWarning("[AutoSync] skipped — {Message}", ex.Message);
             await this.SetRetryAsync(LongRetry, ct).ConfigureAwait(false);
             return;

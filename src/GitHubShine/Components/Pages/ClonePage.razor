@@ -3,10 +3,11 @@
 @inject IConfigStore Config
 @inject ICloneStore Store
 @inject IRepoCloneEngine Engine
-@inject IGitCli Git
+@inject IGitRuntime Git
 @inject IFileDialogs FileDialogs
 @inject SnapshotCache Cache
 @inject IToastService Toast
+@inject AppPlatformInfo Platform
 
 <div class="page narrow">
     <div class="page-header">
@@ -23,7 +24,7 @@
     @if (gitMissing)
     {
         <div class="card sync-warning">
-            <strong>git isn't available</strong>
+            <strong>Git support isn't available</strong>
             <div class="meta">@gitMessage</div>
         </div>
     }
@@ -33,14 +34,24 @@
 
         <div class="field">
             <label>Folder</label>
-            <div class="repo-pick-toolbar">
-                <span class="@(HasRoot ? "" : "muted")" style="flex:1; overflow-wrap:anywhere;">
-                    @(HasRoot ? prefs.RootDirectory : "No folder chosen yet")
-                </span>
-                <button class="btn" @onclick="ChooseFolderAsync" disabled="@IsLocked">
-                    @(HasRoot ? "Change…" : "Choose folder…")
-                </button>
-            </div>
+            @if (Platform.IsMobile)
+            {
+                @* Nothing to choose on a phone: the app can only write inside its own sandbox, so
+                   the destination is fixed and shown rather than asked for. *@
+                <span style="overflow-wrap:anywhere;">@Root</span>
+                <div class="hint">Working copies are kept in this app's storage.</div>
+            }
+            else
+            {
+                <div class="repo-pick-toolbar">
+                    <span class="@(HasRoot ? "" : "muted")" style="flex:1; overflow-wrap:anywhere;">
+                        @(HasRoot ? Root : "No folder chosen yet")
+                    </span>
+                    <button class="btn" @onclick="ChooseFolderAsync" disabled="@IsLocked">
+                        @(HasRoot ? "Change…" : "Choose folder…")
+                    </button>
+                </div>
+            }
         </div>
 
         <div class="field">
@@ -64,7 +75,7 @@
                 }
                 @if (HasRoot && rows.Count > 0)
                 {
-                    <text> Example: @Engine.ResolvePath(prefs.RootDirectory!, rows[0].Repo, prefs.Layout)</text>
+                    <text> Example: @Engine.ResolvePath(Root!, rows[0].Repo, prefs.Layout)</text>
                 }
             </div>
         </div>
@@ -284,7 +295,16 @@
     bool initialScanDone;
     CancellationTokenSource? cts;
 
-    bool HasRoot => !string.IsNullOrWhiteSpace(prefs.RootDirectory);
+    /// <summary>
+    /// The folder every path on this page is resolved against. Mobile has no folder to pick — the
+    /// app can only write inside its own sandbox — so it's fixed at the app data directory and the
+    /// picker is hidden; desktop uses whatever folder was chosen, which is null until one is.
+    /// Not written into <see cref="ClonePrefs"/> on mobile: the sandbox path is assigned by the OS
+    /// and can move between installs, so it's better read fresh than remembered.
+    /// </summary>
+    string? Root => Platform.IsMobile ? AppPaths.CloneDirectory : prefs.RootDirectory;
+
+    bool HasRoot => !string.IsNullOrWhiteSpace(Root);
 
     /// <summary>Whether the controls that would disturb a pass in flight are disabled.</summary>
     bool IsLocked => isBusy || isScanning;
@@ -381,7 +401,7 @@
             return status.Detail;
         if (!HasRoot)
             return row.Account.Label;
-        return $"{row.Account.Label} · {Engine.ResolvePath(prefs.RootDirectory!, row.Repo, prefs.Layout)}";
+        return $"{row.Account.Label} · {Engine.ResolvePath(Root!, row.Repo, prefs.Layout)}";
     }
 
     /// <summary>The destination path, which the second line rarely has room to spell out.</summary>
@@ -391,7 +411,7 @@
         if (!HasRoot)
             return detail;
 
-        var path = row.Status?.Path ?? Engine.ResolvePath(prefs.RootDirectory!, row.Repo, prefs.Layout);
+        var path = row.Status?.Path ?? Engine.ResolvePath(Root!, row.Repo, prefs.Layout);
         return $"{row.Account.Label} · {path}\n{detail}";
     }
 
@@ -539,7 +559,7 @@
         if (IsLocked || gitMissing || !HasRoot || rows.Count == 0)
             return;
 
-        var root = prefs.RootDirectory!;
+        var root = Root!;
         cts = new CancellationTokenSource();
         isScanning = true;
         scanDone = 0;
@@ -615,7 +635,7 @@
         try
         {
             row.SetStatus(await Engine.SwitchBranchAsync(
-                row.Account, row.Repo, prefs.RootDirectory!, prefs.Layout, branch!));
+                row.Account, row.Repo, Root!, prefs.Layout, branch!));
             row.StatusError = null;
 
             await Toast.SuccessAsync($"{row.Repo.FullName} is now on {branch}");
@@ -633,7 +653,7 @@
             try
             {
                 row.SetStatus(await Engine.GetStatusAsync(
-                    row.Account, row.Repo, prefs.RootDirectory!, prefs.Layout, fetchRemote: false));
+                    row.Account, row.Repo, Root!, prefs.Layout, fetchRemote: false));
                 row.StatusError = null;
             }
             catch (Exception readEx)
@@ -656,15 +676,15 @@
             return;
 
         // First run of all: no folder has been picked yet, so ask for one rather than making the
-        // user find the Choose button first.
-        if (!HasRoot)
+        // user find the Choose button first. Never reached on mobile, where Root is always set.
+        if (!HasRoot && !Platform.IsMobile)
         {
             await ChooseFolderAsync();
             if (!HasRoot)
                 return;
         }
 
-        var root = prefs.RootDirectory!;
+        var root = Root!;
         cts = new CancellationTokenSource();
         isBusy = true;
         doneCount = 0;

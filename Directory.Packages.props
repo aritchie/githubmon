@@ -15,6 +15,7 @@
         <PackageVersion Include="Shiny.Notifications" Version="$(ShinyVersion)"/>
         <PackageVersion Include="Shiny.Notifications.Linux" Version="$(ShinyVersion)"/>
         <PackageVersion Include="Shiny.Jobs" Version="$(ShinyVersion)"/>
+        <PackageVersion Include="Shiny.Hosting.Maui" Version="$(ShinyVersion)"/>
         <PackageVersion Include="Shiny.Core.Linux" Version="$(ShinyVersion)"/>
         <PackageVersion Include="Shiny.Blazor.Controls" Version="$(ControlsVersion)"/>
         <PackageVersion Include="Shiny.Maui.Controls.Desktop" Version="$(ControlsVersion)"/>
@@ -28,6 +29,14 @@
         <PackageVersion Include="Microsoft.Maui.Platforms.Linux.Gtk4.Essentials" Version="$(MauiLabsVersion)"/>
         <PackageVersion Include="Microsoft.Maui.Platforms.Linux.Gtk4.BlazorWebView" Version="$(MauiLabsVersion)"/>
         <PackageVersion Include="Octokit" Version="14.0.0"/>
+        <!-- git, in-process. The natives for the desktop RIDs come from LibGit2Sharp.NativeBinaries,
+             which the package pulls in itself; iOS and Android have no published natives and are fed
+             hand-built ones (see eng/libgit2/). Bumping this changes the DllImport name the mobile
+             binaries have to match — check eng/libgit2/README.md before you do. -->
+        <PackageVersion Include="LibGit2Sharp" Version="0.32.0"/>
+        <!-- Referenced explicitly only so the mobile heads can exclude it — see GitHubShine.csproj.
+             The version is pinned by LibGit2Sharp itself ([2.0.324]) and must match it exactly. -->
+        <PackageVersion Include="LibGit2Sharp.NativeBinaries" Version="2.0.324"/>
         <!-- MAUI DevFlow ships in lockstep with the labs platform packages, so it rides the same
              version property. The .Gtk pair is the Linux/GTK4 flavour of the same two libraries. -->
         <PackageVersion Include="Microsoft.Maui.DevFlow.Agent" Version="$(MauiLabsVersion)"/>

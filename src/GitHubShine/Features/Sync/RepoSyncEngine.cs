@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
+using LibGit2Sharp;
 using Shiny;
 
 namespace GitHubShine.Sync;
@@ -18,17 +19,18 @@ public interface IRepoSyncEngine
 }
 
 /// <summary>
-/// Copies commits between two hosts by way of a local bare repo, using the <c>git</c> CLI:
-/// fetch the source's branches/tags into a cache under <see cref="AppPaths.SyncCacheDirectory"/>,
-/// then push the requested refs to the target. The cache means a "catch up" run only transfers
-/// the objects the target is actually missing rather than re-cloning every time.
+/// Copies commits between two hosts by way of a local bare repo, driving libgit2 in-process through
+/// LibGit2Sharp: fetch the source's branches/tags into a cache under
+/// <see cref="AppPaths.SyncCacheDirectory"/>, then push the requested refs to the target. The cache
+/// means a "catch up" run only transfers the objects the target is actually missing rather than
+/// re-cloning every time.
 ///
-/// The cache is deliberately NOT a `git clone --mirror`: a mirror's <c>+refs/*:refs/*</c> refspec
-/// also drags in GitHub's <c>refs/pull/*</c>, which is large and meaningless on the target. Only
+/// The cache is deliberately NOT a mirror clone: a mirror's <c>+refs/*:refs/*</c> refspec also drags
+/// in GitHub's <c>refs/pull/*</c>, which is large and meaningless on the target. Only
 /// <c>refs/heads/*</c> and <c>refs/tags/*</c> are mirrored.
 ///
-/// Credentials are handled by <see cref="GitCli"/> — see its remarks; nothing here ever puts a
-/// token into a URL, an argument, or the cache's .git config.
+/// Credentials go to libgit2 through a callback (see <see cref="GitCallbacks"/>) and are never
+/// written anywhere: not into a URL, an argument, or the cache's config.
 /// </summary>
 [Singleton]
 public sealed class RepoSyncEngine(
@@ -36,11 +38,18 @@ public sealed class RepoSyncEngine(
     ISyncStore syncStore,
     IGitProviderFactory factory,
     ITokenVault vault,
-    IGitCli git,
+    IGitRuntime runtime,
     ILogger<RepoSyncEngine> logger) : IRepoSyncEngine
 {
+    /// <summary>
+    /// The cache's remote for whichever target is being pushed right now. A cache is shared by every
+    /// mapping with the same source, so this is repointed each run — under the same gate that keeps
+    /// two runs out of one cache directory.
+    /// </summary>
+    const string TargetRemote = "githubshine-target";
+
     // Two mappings can share a source, and therefore a cache directory. Runs are sequential today,
-    // but concurrent git processes in one bare repo would corrupt it, so gate per cache path.
+    // but concurrent writers in one bare repo would corrupt it, so gate per cache path.
     readonly ConcurrentDictionary<string, SemaphoreSlim> cacheGates = new(StringComparer.OrdinalIgnoreCase);
 
     public async Task<SyncOutcome> SyncAsync(SyncMapping mapping, IProgress<string>? progress = null, CancellationToken ct = default)
@@ -65,7 +74,7 @@ public sealed class RepoSyncEngine(
 
     async Task<SyncOutcome> RunAsync(SyncMapping mapping, IProgress<string>? progress, CancellationToken ct)
     {
-        await git.EnsureAvailableAsync(ct).ConfigureAwait(false);
+        await runtime.EnsureAvailableAsync(ct).ConfigureAwait(false);
 
         var sourceAccount = this.FindAccount(mapping.SourceAccountId, "source");
         var targetAccount = this.FindAccount(mapping.TargetAccountId, "target");
@@ -114,19 +123,41 @@ public sealed class RepoSyncEngine(
         IReadOnlyList<string> pushedBranches;
         try
         {
-            await this.EnsureCacheAsync(cacheDir, sourceUrl, ct).ConfigureAwait(false);
+            EnsureCache(cacheDir, sourceUrl);
 
             Report(progress, $"Fetching from {Redact(sourceUrl)}…");
-            await this.RunGitAsync(cacheDir, ["fetch", "--no-progress", "--prune", "--prune-tags", "origin"], sourceCredential, ct)
-                .ConfigureAwait(false);
 
-            pushedBranches = await this.ResolveBranchesAsync(cacheDir, mapping, sourceInfo.DefaultBranch, progress, ct).ConfigureAwait(false);
+            pushedBranches = await GitCallbacks.Run(() =>
+            {
+                using var git = new Repository(cacheDir);
 
-            var args = BuildPushArgs(mapping, targetUrl, pushedBranches);
-            Report(progress, $"Pushing {DescribeRefs(mapping, pushedBranches)} to {Redact(targetUrl)}…");
-            var push = await this.RunGitAsync(cacheDir, args, targetCredential, ct).ConfigureAwait(false);
-            foreach (var line in Lines(push.StdErr).Concat(Lines(push.StdOut)))
-                Report(progress, line);
+                // Prune covers tags as well as heads here, because the refspecs this cache fetches
+                // with include refs/tags/* — which is what `--prune --prune-tags` bought the CLI.
+                Commands.Fetch(
+                    git,
+                    "origin",
+                    [],
+                    GitCallbacks.Fetch(sourceCredential, ct, prune: true, progress, TagFetchMode.All),
+                    null);
+
+                var branches = ResolveBranches(git, mapping, sourceInfo.DefaultBranch, progress);
+                var specs = BuildPushRefSpecs(git, mapping, branches);
+
+                var remote = git.Network.Remotes[TargetRemote] is null
+                    ? git.Network.Remotes.Add(TargetRemote, targetUrl)
+                    : UpdateUrl(git, TargetRemote, targetUrl);
+
+                // Deletions are worked out here rather than by a push option: libgit2 has no
+                // equivalent of `push --prune`, so the refs the target has and the source no longer
+                // does become explicit ":refs/…" delete refspecs.
+                if (mapping is { Force: true, BranchMode: SyncBranchMode.All })
+                    specs.AddRange(DeletionRefSpecs(git, remote, targetCredential, mapping.IncludeTags, progress));
+
+                Report(progress, $"Pushing {DescribeRefs(mapping, branches)} to {Redact(targetUrl)}…");
+                Push(git, remote, specs, targetCredential, ct);
+
+                return branches;
+            }, ct).ConfigureAwait(false);
         }
         finally
         {
@@ -164,7 +195,7 @@ public sealed class RepoSyncEngine(
     /// Creates (or refreshes) the bare staging repo. Keyed by source account + repo, so several
     /// mappings that back up the same source to different targets share one local copy.
     /// </summary>
-    async Task EnsureCacheAsync(string cacheDir, string sourceUrl, CancellationToken ct)
+    static void EnsureCache(string cacheDir, string sourceUrl)
     {
         Directory.CreateDirectory(AppPaths.SyncCacheDirectory);
 
@@ -174,18 +205,36 @@ public sealed class RepoSyncEngine(
             if (Directory.Exists(cacheDir))
                 Directory.Delete(cacheDir, recursive: true);
 
-            Directory.CreateDirectory(cacheDir);
-            await this.RunGitAsync(cacheDir, ["init", "--bare", "--quiet"], null, ct).ConfigureAwait(false);
-            await this.RunGitAsync(cacheDir, ["remote", "add", "origin", sourceUrl], null, ct).ConfigureAwait(false);
-        }
-        else
-        {
-            await this.RunGitAsync(cacheDir, ["remote", "set-url", "origin", sourceUrl], null, ct).ConfigureAwait(false);
+            Repository.Init(cacheDir, isBare: true);
+
+            using var fresh = new Repository(cacheDir);
+            fresh.Network.Remotes.Add("origin", sourceUrl);
+            SetSourceRefSpecs(fresh);
+            return;
         }
 
+        using var git = new Repository(cacheDir);
+        UpdateUrl(git, "origin", sourceUrl);
+
         // Rewritten every run so caches created by older builds pick up refspec changes.
-        await this.RunGitAsync(cacheDir, ["config", "--replace-all", "remote.origin.fetch", "+refs/heads/*:refs/heads/*"], null, ct).ConfigureAwait(false);
-        await this.RunGitAsync(cacheDir, ["config", "--add", "remote.origin.fetch", "+refs/tags/*:refs/tags/*"], null, ct).ConfigureAwait(false);
+        SetSourceRefSpecs(git);
+    }
+
+    /// <summary>
+    /// Mirrors heads and tags into the cache under the same names, and nothing else — no
+    /// <c>refs/pull/*</c>, no remote-tracking indirection. Replaces whatever was configured before.
+    /// </summary>
+    static void SetSourceRefSpecs(Repository git)
+        => git.Network.Remotes.Update("origin", r => r.FetchRefSpecs =
+        [
+            "+refs/heads/*:refs/heads/*",
+            "+refs/tags/*:refs/tags/*"
+        ]);
+
+    static Remote UpdateUrl(Repository git, string name, string url)
+    {
+        git.Network.Remotes.Update(name, r => r.Url = url);
+        return git.Network.Remotes[name];
     }
 
     /// <summary>
@@ -218,12 +267,11 @@ public sealed class RepoSyncEngine(
     /// warning about) any that aren't in the source. Returns empty for All mode, which pushes a
     /// wildcard refspec instead of naming branches.
     /// </summary>
-    async Task<IReadOnlyList<string>> ResolveBranchesAsync(
-        string cacheDir,
+    static IReadOnlyList<string> ResolveBranches(
+        Repository git,
         SyncMapping mapping,
         string sourceDefaultBranch,
-        IProgress<string>? progress,
-        CancellationToken ct)
+        IProgress<string>? progress)
     {
         if (mapping.BranchMode == SyncBranchMode.All)
             return [];
@@ -239,8 +287,7 @@ public sealed class RepoSyncEngine(
         if (wanted.Count == 0)
             throw new InvalidOperationException("This sync has no branches selected — edit it and pick at least one.");
 
-        var listed = await this.RunGitAsync(cacheDir, ["for-each-ref", "--format=%(refname:strip=2)", "refs/heads/"], null, ct).ConfigureAwait(false);
-        var present = new HashSet<string>(Lines(listed.StdOut), StringComparer.Ordinal);
+        var present = new HashSet<string>(HeadNames(git), StringComparer.Ordinal);
 
         var missing = wanted.Where(b => !present.Contains(b)).ToList();
         foreach (var b in missing)
@@ -254,31 +301,109 @@ public sealed class RepoSyncEngine(
         return resolved;
     }
 
-    static List<string> BuildPushArgs(SyncMapping mapping, string targetUrl, IReadOnlyList<string> branches)
+    /// <summary>The cache's own branches, by bare name — the fetch mirrored them under refs/heads.</summary>
+    static IEnumerable<string> HeadNames(Repository git)
+        => git.Refs
+            .Select(r => r.CanonicalName)
+            .Where(n => n.StartsWith("refs/heads/", StringComparison.Ordinal))
+            .Select(n => n["refs/heads/".Length..])
+            .Where(n => n.Length > 0);
+
+    /// <summary>
+    /// The concrete refspecs to push. Every wildcard is expanded against the cache first, because
+    /// libgit2's push — unlike the CLI's — rejects a pattern refspec outright ("not a valid
+    /// reference 'refs/heads/*'"). Expanding here means "all branches" still means whatever the
+    /// source had at the moment it was fetched, which is exactly what the wildcard used to mean.
+    /// </summary>
+    static List<string> BuildPushRefSpecs(Repository git, SyncMapping mapping, IReadOnlyList<string> branches)
     {
-        // A leading '+' is a per-refspec force. Preferred over --force because it keeps the
-        // "no force" case genuinely fast-forward-only, so a diverged target fails loudly.
+        // A leading '+' is a per-refspec force. Preferred over a blanket force flag because it keeps
+        // the "no force" case genuinely fast-forward-only, so a diverged target fails loudly.
         var force = mapping.Force ? "+" : "";
         var specs = new List<string>();
 
         if (mapping.BranchMode == SyncBranchMode.All)
-            specs.Add($"{force}refs/heads/*:refs/heads/*");
+            specs.AddRange(RefsUnder(git, "refs/heads/").Select(n => $"{force}{n}:{n}"));
         else
             specs.AddRange(branches.Select(b => $"{force}refs/heads/{b}:refs/heads/{b}"));
 
         if (mapping.IncludeTags)
-            specs.Add($"{force}refs/tags/*:refs/tags/*");
+            specs.AddRange(RefsUnder(git, "refs/tags/").Select(n => $"{force}{n}:{n}"));
 
-        var args = new List<string> { "push", "--no-progress" };
+        if (specs.Count == 0)
+            throw new InvalidOperationException(
+                $"{mapping.Source.FullName} has no branches to push — it looks empty.");
 
-        // Pruning deletes refs on the target that the source no longer has — exact-mirror
-        // semantics, so it's gated behind both All mode and the explicit Force opt-in.
-        if (mapping is { Force: true, BranchMode: SyncBranchMode.All })
-            args.Add("--prune");
+        return specs;
+    }
 
-        args.Add(targetUrl);
-        args.AddRange(specs);
-        return args;
+    /// <summary>Canonical names of the cache's refs below a prefix, in a stable order.</summary>
+    static IEnumerable<string> RefsUnder(Repository git, string prefix)
+        => git.Refs
+            .Select(r => r.CanonicalName)
+            .Where(n => n.StartsWith(prefix, StringComparison.Ordinal) && n.Length > prefix.Length)
+            .OrderBy(n => n, StringComparer.Ordinal);
+
+    /// <summary>
+    /// Delete refspecs for everything the target still has and the source has dropped — exact-mirror
+    /// semantics, which is why the caller only asks for them under both All mode and the explicit
+    /// Force opt-in. Listing the target's refs is one extra round-trip, and the only way to see them:
+    /// libgit2 has no push-side prune.
+    /// </summary>
+    static IEnumerable<string> DeletionRefSpecs(
+        Repository git,
+        Remote remote,
+        GitCredential? credential,
+        bool includeTags,
+        IProgress<string>? progress)
+    {
+        List<string> theirs;
+        try
+        {
+            theirs = git.Network
+                .ListReferences(remote, GitCallbacks.Credentials(credential))
+                .Select(r => r.CanonicalName)
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            // A target that can't be listed (brand new and still empty, most likely) has nothing to
+            // prune anyway — never fail the push over the bookkeeping half of it.
+            Report(progress, $"Note: couldn't list the target's refs to prune ({ex.Message}).");
+            yield break;
+        }
+
+        var ours = new HashSet<string>(git.Refs.Select(r => r.CanonicalName), StringComparer.Ordinal);
+
+        foreach (var name in theirs)
+        {
+            var isHead = name.StartsWith("refs/heads/", StringComparison.Ordinal);
+            var isTag = includeTags && name.StartsWith("refs/tags/", StringComparison.Ordinal);
+
+            // Peeled tags ("refs/tags/v1^{}") are a listing artefact, not a ref you can delete.
+            if ((!isHead && !isTag) || name.EndsWith("^{}", StringComparison.Ordinal) || ours.Contains(name))
+                continue;
+
+            Report(progress, $"Pruning {name} from the target — it's gone from the source.");
+            yield return $":{name}";
+        }
+    }
+
+    /// <summary>
+    /// Pushes and turns a per-ref rejection into a failure. libgit2 reports those through a callback
+    /// rather than by throwing, so without this a target that refused a non-fast-forward would look
+    /// like a clean sync.
+    /// </summary>
+    static void Push(Repository git, Remote remote, IEnumerable<string> specs, GitCredential? credential, CancellationToken ct)
+    {
+        var rejected = new List<string>();
+        var options = GitCallbacks.Push(credential, ct);
+        options.OnPushStatusError = error => rejected.Add($"{error.Reference}: {error.Message}");
+
+        git.Network.Push(remote, specs, options);
+
+        if (rejected.Count > 0)
+            throw new InvalidOperationException($"The target rejected the push — {string.Join("; ", rejected)}");
     }
 
     static string DescribeRefs(SyncMapping mapping, IReadOnlyList<string> branches)
@@ -292,20 +417,6 @@ public sealed class RepoSyncEngine(
     }
 
     // ---- plumbing ----
-
-    async Task<GitResult> RunGitAsync(string workingDir, IReadOnlyList<string> args, GitCredential? credential, CancellationToken ct)
-    {
-        // Every invocation is scoped to the cache repo with -C so nothing depends on the process's
-        // working directory (which the MAUI host owns).
-        var full = new List<string> { "-C", workingDir };
-        full.AddRange(args);
-
-        var result = await git.RunAsync(workingDir, full, credential, ct).ConfigureAwait(false);
-        if (!result.Success)
-            throw new InvalidOperationException($"git {args[0]} failed: {result.Message}");
-
-        return result;
-    }
 
     MonitoredAccount FindAccount(string accountId, string role)
         => config.Accounts.FirstOrDefault(a => a.Id == accountId)
@@ -365,9 +476,4 @@ public sealed class RepoSyncEngine(
             return url;
         return $"{uri.Scheme}://***@{uri.Host}{uri.AbsolutePath}";
     }
-
-    static IEnumerable<string> Lines(string text)
-        => text.Split('\n', StringSplitOptions.RemoveEmptyEntries)
-            .Select(l => l.TrimEnd('\r').Trim())
-            .Where(l => l.Length > 0);
 }

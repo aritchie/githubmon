@@ -18,6 +18,12 @@ public enum CloneLayout
 /// store is in-memory (so a folder chosen once would be forgotten on restart), and a raw SQLite
 /// backup then carries it along with the accounts it belongs to. Single row, fixed id.
 /// </summary>
+/// <param name="RootDirectory">
+/// The folder chosen to clone into, null until one has been. Desktop only: mobile can only write
+/// inside its own sandbox, so it offers no folder picker and always uses
+/// <see cref="AppPaths.CloneDirectory"/> — a path the OS assigns and can move between installs,
+/// which is why it isn't stored here.
+/// </param>
 /// <param name="InitialBranch">
 /// The branch a freshly cloned repo is left on. Null (the default) means each repo's own default
 /// branch, and so does a name a given repo doesn't have — a preference for "develop" across the

@@ -63,10 +63,56 @@
 	</ItemGroup>
 	<ItemGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">
 		<Compile Include="Platforms\Android\**\*.cs" />
+
+		<!-- libgit2, built by eng/libgit2/build-android.sh. LibGit2Sharp.NativeBinaries has no
+		     Android RID, so without these the managed assembly loads and then throws
+		     DllNotFoundException on first use (which GitRuntime reports as "Git support isn't
+		     available"). The file name is the DllImport name and is tied to the pinned
+		     LibGit2Sharp version — see eng/libgit2/README.md. -->
+		<AndroidNativeLibrary Include="Platforms\Android\native\arm64-v8a\libgit2-5853918.so" Abi="arm64-v8a" />
+		<AndroidNativeLibrary Include="Platforms\Android\native\x86_64\libgit2-5853918.so" Abi="x86_64" />
+
+		<!-- ...and keep the package's own natives out of the APK. The RID graph falls android-arm64
+		     -> linux-arm64, so LibGit2Sharp.NativeBinaries' *glibc* build gets packaged under the
+		     same file name as ours and wins. It then fails to dlopen on device looking for
+		     libc.so.6, which bionic does not have and never will. -->
+		<PackageReference Include="LibGit2Sharp.NativeBinaries" ExcludeAssets="all" />
 	</ItemGroup>
 	<ItemGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'ios'">
 		<Compile Include="Platforms\iOS\**\*.cs" />
+
+		<!-- libgit2, built by eng/libgit2/build-ios.sh — see eng/libgit2/README.md. Device and
+		     simulator slices are separate files because they can't be lipo'd together (both arm64,
+		     different platform), so the right one is picked by RID. As on Android, the package's
+		     own natives are excluded so its macOS build can't be substituted for ours. -->
+		<PackageReference Include="LibGit2Sharp.NativeBinaries" ExcludeAssets="all" />
 	</ItemGroup>
+
+	<!-- Copied into the bundle rather than referenced with @(NativeReference Kind="Dynamic"),
+	     which does not work on iOS: that links the dylib into the app binary and rewrites its path
+	     to "@executable_path/Contents/MonoBundle/…" — the *macOS* bundle layout, hardcoded as
+	     _CustomBundleName in Xamarin.Shared.targets — while placing the file at the root of the
+	     flat iOS bundle. dyld then can't find it and the app dies before Main.
+
+	     As a bundle resource there is no load command at all: the file sits next to the managed
+	     assemblies and LibGit2Sharp's DllImport resolves it lazily out of the assembly directory,
+	     exactly as it does from the runtimes folder on desktop. -->
+	<ItemGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'ios' And $(RuntimeIdentifier.StartsWith('iossimulator'))">
+		<BundleResource Include="Platforms\iOS\native\simulator\git2-5853918.dylib" LogicalName="git2-5853918.dylib" />
+	</ItemGroup>
+
+	<ItemGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'ios' And !$(RuntimeIdentifier.StartsWith('iossimulator'))">
+		<BundleResource Include="Platforms\iOS\native\device\git2-5853918.dylib" LogicalName="git2-5853918.dylib" />
+	</ItemGroup>
+
+	<!-- ...which does mean nothing else signs it. A dylib inside the bundle is code, and on a
+	     device dyld refuses to load an unsigned one, so it gets signed with the app's own identity
+	     just before the bundle itself is sealed. The simulator doesn't enforce this. -->
+	<Target Name="_SignLibGit2Native"
+	        Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'ios' And !$(RuntimeIdentifier.StartsWith('iossimulator')) And '$(_CodeSigningKey)' != ''"
+	        BeforeTargets="_CodesignAppBundle">
+		<Exec Command="codesign --force --sign &quot;$(_CodeSigningKey)&quot; &quot;$(AppBundleDir)/git2-5853918.dylib&quot;" />
+	</Target>
 
 	<ItemGroup>
 		<PackageReference Include="Microsoft.Maui.Controls" />
@@ -86,10 +132,17 @@
 		<PackageReference Include="Shiny.Extensions.DependencyInjection" />
 
 		<PackageReference Include="Octokit" />
+		<PackageReference Include="LibGit2Sharp" />
 	</ItemGroup>
 
 	<ItemGroup Condition="'$(_IsMobile)' != 'true'">
 		<PackageReference Include="Shiny.Maui.Controls.Desktop"/>
+	</ItemGroup>
+
+	<!-- Shiny's MAUI host (UseShiny). Only referenced on the heads it actually supports — its
+	     net10.0 asset is empty, so the labs macOS/Linux heads call AddShinyCoreServices instead. -->
+	<ItemGroup Condition="'$(_IsMobile)' == 'true' Or $(TargetFramework.Contains('windows'))">
+		<PackageReference Include="Shiny.Hosting.Maui" />
 	</ItemGroup>
 
 	<!-- MAUI DevFlow: the CLI's in-app agent, plus the Blazor tools that expose the WebView over

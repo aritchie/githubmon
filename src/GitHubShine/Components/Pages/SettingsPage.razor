@@ -141,8 +141,8 @@
         }
     </div>
 
-    @* Sync shells out to the git CLI, which mobile doesn't have — the Sync page is hidden there
-       too, so its schedule has nothing to configure. *@
+    @* Sync is a desktop-only workflow and its page is hidden on mobile, so there's no schedule
+       to configure there. *@
     @if (!Platform.IsMobile)
     {
         <div class="card">

@@ -3,7 +3,7 @@
 @inject ISyncStore SyncStore
 @inject IConfigStore Config
 @inject IRepoSyncEngine Engine
-@inject IGitCli Git
+@inject IGitRuntime Git
 @inject NavigationManager Nav
 @inject IToastService Toast
 @inject IBrowser Browser
@@ -25,7 +25,7 @@
     @if (gitMissing)
     {
         <div class="card sync-warning">
-            <strong>git isn't available</strong>
+            <strong>Git support isn't available</strong>
             <div class="meta">@gitMessage</div>
         </div>
     }

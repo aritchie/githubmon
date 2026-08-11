@@ -98,19 +98,15 @@ public static class MauiProgram
 #endif
         builder.Services.AddSingleton(Browser.Default);
 
-        // Shiny resolves INotificationManager through Shiny.IPlatform. That binding normally comes
-        // from Shiny.Hosting.Maui's UseShiny(), but that package ships no net10.0-macos asset — on
-        // this app's macOS head it resolves the platform-less net10.0 build and registers nothing,
-        // so INotificationManager failed to construct and notifications never worked. Register the
-        // per-head platform type directly; each one is a parameterless public type.
-#if MACOS
-        builder.Services.AddSingleton<Shiny.IPlatform, Shiny.MacPlatform>();
-#elif IOS
-        builder.Services.AddSingleton<Shiny.IPlatform, Shiny.IosPlatform>();
-#elif ANDROID
-        builder.Services.AddSingleton<Shiny.IPlatform, Shiny.AndroidPlatform>();
-#elif WINDOWS
-        builder.Services.AddSingleton<Shiny.IPlatform, Shiny.WindowsPlatform>();
+        // Shiny's platform services — IPlatform and the concrete per-head platform type that
+        // Shiny's own JobManager takes — come from Shiny itself rather than being hand-registered
+        // here. On the heads Shiny.Hosting.Maui supports, UseShiny() is the entry point; the labs
+        // macOS/Linux heads aren't MAUI heads it knows about (its only non-platform asset is an
+        // empty net10.0 one), so they call Shiny.Core's registration directly.
+#if ANDROID || IOS || WINDOWS
+        builder.UseShiny();
+#else
+        Shiny.Infrastructure.ShinyInfrastructureExtensions.AddShinyCoreServices(builder.Services);
 #endif
         builder.Services.AddNotifications();
 
@@ -185,8 +181,9 @@ public static class MauiProgram
         );
 
 #if !MOBILE
-        // Auto-sync stays desktop-only for the same reason the Sync nav item is: it shells out to
-        // the git CLI, which mobile doesn't have.
+        // Auto-sync stays desktop-only for the same reason the Sync nav item is: it's a two-account
+        // workflow with a mapping list, which the phone UI doesn't offer. (Git itself is in-process
+        // now, so this is a UI decision rather than a capability one.)
         builder.Services.AddJob<AutoSyncJob>(r => r
             .WithForeground()
             .WithInternet(InternetAccess.Any)
