@@ -12,6 +12,10 @@ namespace GitHubShine.Jobs;
 /// registered. Found by running the desktop head and noticing the jobs never logged: the only
 /// thing touching the poll state was the config-change handler.
 ///
+/// Starting it is <see cref="ShinyStartupTaskService"/>'s job, not this one's — JobManager is an
+/// <c>IShinyStartupTask</c> like any other, and this used to reach in and Start() only that one by
+/// hand, leaving Shiny's own platform lifecycle task unstarted on the labs heads.
+///
 /// <see cref="AbstractJobManager.RequestAccess"/> is what reports whether background execution is
 /// available — on iOS it answers <c>NotSetup</c> when the BGTaskScheduler declaration in
 /// Info.plist is missing, which is worth logging loudly because the symptom otherwise is simply
@@ -27,28 +31,6 @@ public sealed class JobStartupService(
         {
             try
             {
-#if !(ANDROID || IOS || WINDOWS)
-                // The actual start. Shiny.Jobs' JobManager implements IShinyStartupTask, and its
-                // Start() is what arms the recurring timer that runs foreground jobs. Resolving the
-                // manager alone constructs it but leaves it idle: the jobs log "registered" and
-                // then nothing ever fires. Verified by running the desktop head before and after.
-                //
-                // ONLY on the labs macOS/Linux heads. Everywhere else MauiProgram calls UseShiny(),
-                // whose ShinyMauiInitializationService runs Host.Run() — and that already invokes
-                // Start() on every IShinyStartupTask, on the UI thread, inside FinishedLaunching.
-                // Calling it a second time from here is not merely redundant: on iOS, Start()
-                // registers the four BGTaskScheduler identifiers, and Apple requires every launch
-                // handler to be registered *before the app finishes launching*. This call arrives
-                // on a thread-pool thread some time after that, so the second registration both
-                // duplicates an existing identifier and breaks that contract.
-                //
-                // It goes unnoticed on the simulator because iOS JobManager.Start() opens with
-                // `if (Runtime.Arch == Arch.SIMULATOR) return;` — the whole method is a no-op
-                // there, so only a physical device ever executes any of it.
-                if (jobs is IShinyStartupTask startup)
-                    startup.Start();
-#endif
-
                 var registered = jobs.GetJobs();
                 logger.LogInformation(
                     "[Jobs] {Count} job(s) registered: {Jobs}",

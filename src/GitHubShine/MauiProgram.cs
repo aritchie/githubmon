@@ -108,7 +108,9 @@ public static class MauiProgram
 #else
         Shiny.Infrastructure.ShinyInfrastructureExtensions.AddShinyCoreServices(builder.Services);
 #endif
-        builder.Services.AddNotifications();
+        // The delegate is what runs when the user taps a notification — see
+        // NotificationEntryDelegate.
+        builder.Services.AddNotifications<NotificationEntryDelegate>();
 
         builder.Services.AddShinyMediator(cfg => cfg
             .AddMediatorRegistry()
@@ -190,8 +192,16 @@ public static class MauiProgram
         );
 #endif
 
-        // Constructs and starts the job manager — nothing else resolves IJobManager, and DI is
-        // lazy, so without this the jobs above are registered but never invoked.
+#if !(ANDROID || IOS || WINDOWS)
+        // Starts every IShinyStartupTask, which UseShiny() does for us on the heads it supports.
+        // Registered ahead of JobStartupService because it is what starts the job manager, and
+        // ahead of anything else that assumes Shiny's platform lifecycle is live.
+        builder.Services.AddSingletonAsImplementedInterfaces<ShinyStartupTaskService>();
+#endif
+
+        // Constructs the job manager and reports whether the OS will run it — nothing else
+        // resolves IJobManager, and DI is lazy, so without this the jobs above are registered but
+        // never invoked.
         builder.Services.AddSingletonAsImplementedInterfaces<JobStartupService>();
 
         // Startup paint + refresh-on-config-change; the periodic refresh is RepoPollJob's.
