@@ -45,12 +45,19 @@
                 Personal access token
                 <span class="hint">@(providerType == GitProviderType.Gitea ? "— {host}/user/settings/applications" : "— github.com/settings/personal-access-tokens")</span>
             </label>
-            <input type="password" @bind="token"
-                   placeholder="@TokenPlaceholder" />
+            <div class="input-with-action">
+                <input type="@(showToken ? "text" : "password")" value="@token" @oninput="OnTokenChanged"
+                       autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
+                       placeholder="@TokenPlaceholder" />
+                <button class="btn" type="button" @onclick="@(() => showToken = !showToken)"
+                        title="@(showToken ? "Hide the token" : "Show the token")">
+                    @(showToken ? "Hide" : "Show")
+                </button>
+            </div>
             @if (hasSavedToken)
             {
                 <div class="hint" style="margin-top: 4px;">
-                    A token is already saved for this account. Enter a new one only to replace it.
+                    This is the token saved for this account — edit it to replace it, or clear the field to remove it.
                 </div>
             }
         </div>
@@ -164,6 +171,7 @@
 
     string label = "";
     string token = "";
+    bool showToken;
     GitProviderType providerType = GitProviderType.GitHub;
     string hostUrl = "";
     string? validationMessage;
@@ -178,9 +186,9 @@
     readonly List<RepoSelection> availableRepos = new();
     List<RepoSelection> filteredRepos = new();
 
-    string TokenPlaceholder => hasSavedToken
-        ? "•••••••• (token saved — leave blank to keep it)"
-        : (providerType == GitProviderType.Gitea ? "your Gitea token" : "github_pat_...");
+    string TokenPlaceholder => providerType == GitProviderType.Gitea
+        ? "your Gitea token"
+        : "github_pat_...";
 
     bool ShowRepoList => hasFetchedRepos || availableRepos.Count > 0;
     int SelectedCount => availableRepos.Count(r => r.IsSelected);
@@ -202,7 +210,12 @@
             hostUrl = account.HostUrl ?? "";
             validatedUsername = account.Username;
             existingRepoFullNames = account.Repos.Select(r => r.FullName).ToList();
-            hasSavedToken = !string.IsNullOrWhiteSpace(await Vault.GetTokenAsync(account.Id));
+            // Load the saved token straight into the field so it can be reviewed,
+            // revealed and edited in place rather than blind-replaced.
+            var savedToken = await Vault.GetTokenAsync(account.Id);
+            hasSavedToken = !string.IsNullOrWhiteSpace(savedToken);
+            if (hasSavedToken)
+                token = savedToken!;
 
             // Show the currently monitored repos immediately so they can be
             // unchecked/saved without a round-trip to GitHub. A later fetch
@@ -233,6 +246,9 @@
         await ValidateAsync();
         StateHasChanged();
     }
+
+    void OnTokenChanged(ChangeEventArgs e)
+        => token = e.Value?.ToString() ?? "";
 
     void OnFilterChanged(ChangeEventArgs e)
     {
@@ -271,7 +287,7 @@
     async Task<string?> ResolveTokenAsync()
     {
         if (!string.IsNullOrWhiteSpace(token))
-            return token;
+            return token.Trim();
         if (AccountId is not null)
             return await Vault.GetTokenAsync(AccountId);
         return null;
@@ -397,8 +413,13 @@
                 .ToList();
             var account = new MonitoredAccount(id, label.Trim(), validatedUsername, repos, providerType, EffectiveHost);
             await Config.UpsertAccountAsync(account);
-            if (!string.IsNullOrWhiteSpace(token))
-                await Vault.SetTokenAsync(id, token);
+            // The field is pre-filled with the saved token, so an empty one is a
+            // deliberate "remove it", not "leave what's there alone".
+            var trimmedToken = token.Trim();
+            if (trimmedToken.Length > 0)
+                await Vault.SetTokenAsync(id, trimmedToken);
+            else if (hasSavedToken)
+                await Vault.DeleteTokenAsync(id);
             // Drop any cached provider so provider-type / host / token edits take effect.
             Factory.Invalidate(id);
 
