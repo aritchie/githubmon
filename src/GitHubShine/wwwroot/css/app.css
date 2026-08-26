@@ -170,6 +170,50 @@ main.has-tabbar { padding-bottom: 0; }
     margin: 0 0 10px;
 }
 
+/* A section heading with a control parked on the right of it. */
+.section-title-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.section-title-row .section-title { margin-bottom: 10px; }
+.section-title-row .spacer { flex: 1 1 auto; }
+
+/* Segmented control: one bordered pill split into buttons, so the choice reads as one control
+   with an active segment rather than two buttons that happen to sit together. */
+.view-switch {
+    display: inline-flex;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+    margin-bottom: 10px;
+}
+
+.view-switch-btn {
+    padding: 4px 14px;
+    min-height: 28px;
+    border: none;
+    border-left: 1px solid var(--border);
+    background: var(--card-subtle);
+    color: var(--fg-muted);
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.12s ease, color 0.12s ease;
+}
+
+.view-switch-btn:first-child { border-left: none; }
+.view-switch-btn:hover:not(.active) { color: var(--fg); }
+
+.view-switch-btn.active {
+    background: var(--card);
+    color: var(--fg);
+    box-shadow: inset 0 -2px 0 var(--link);
+}
+
 /* ---------- Cards ---------- */
 
 .card {
@@ -468,18 +512,64 @@ input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px;
 
 /* ---------- Sync list ---------- */
 
-.sync-row {
+/* Wider than the other narrow pages: a sync row carries a route, a chip strip, three timestamp
+   facts and a full action bar, and at 820px those all collapse into a ragged column. */
+.page.sync-page { max-width: 1080px; }
+
+/* Sentence-length subtitle: let it wrap in its own column instead of pushing the header's
+   buttons onto a line of their own. */
+.sync-page .page-header .header-text { flex: 1 1 420px; min-width: 0; }
+
+/* Toolbar: the counts sit left, the controls move as one right-aligned block. Wrapping the
+   controls in their own flex group is what stops a single button dropping onto a ragged line of
+   its own when the window narrows. */
+.sync-toolbar {
     display: flex;
-    align-items: flex-start;
-    gap: 12px;
+    align-items: center;
+    gap: 10px 12px;
     flex-wrap: wrap;
 }
 
-/* min-width:0 is the fix for badges pushing the buttons off the row: without it a flex item
-   refuses to shrink below its content width, so one long repo name widened the text column
-   until the actions had nowhere to go. flex-basis keeps it from collapsing to nothing. */
-.sync-row .sync-body { flex: 1 1 260px; min-width: 0; }
+.sync-toolbar-summary { flex: 1 1 240px; min-width: 0; }
+
+.sync-toolbar-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    margin-left: auto;
+}
+
+/* The schedule line is about what happens with the app closed — separated from the run controls
+   above it so the two aren't read as one row of buttons. */
+.sync-toolbar-schedule {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+}
+
+/* The row is now a stack of bands (head / chips / facts / footer) rather than three columns
+   fighting for the same line — each band aligns internally and none can shove another around. */
+.sync-row {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 18px 18px 14px;
+}
+
 .sync-row .meta { color: var(--fg-muted); font-size: 12px; }
+
+.sync-head {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+}
+
+/* min-width:0 is the fix for badges pushing the route off the row: without it a flex item
+   refuses to shrink below its content width, so one long repo name widened the text column
+   until the badges had nowhere to go. */
+.sync-head .sync-route { flex: 1 1 auto; min-width: 0; }
 
 /* Badges stack in their own fixed column so their width never depends on the repo name. */
 .sync-row .sync-status {
@@ -489,7 +579,7 @@ input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px;
     gap: 4px;
     flex: 0 0 auto;
     min-width: 90px;
-    padding-top: 2px;
+    padding-top: 1px;
 }
 
 .sync-route {
@@ -498,9 +588,65 @@ input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px;
     gap: 8px;
     flex-wrap: wrap;
     overflow-wrap: anywhere;
+    font-size: 15px;
 }
 
 .sync-route .sync-arrow { color: var(--fg-muted); }
+
+/* One chip per configured option — cheaper to scan than the run-on "a → b · branches · tags". */
+.sync-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: -4px;
+}
+
+.sync-tag {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 5px;
+    padding: 2px 8px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--card-subtle);
+    color: var(--fg-muted);
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.sync-tag .sync-arrow { color: var(--fg-muted); }
+.sync-tag.muted-tag { border-style: dashed; }
+
+/* auto-fit rather than a fixed column count: three facts side by side on a desktop window, and
+   they fold to two and then one as it narrows, staying aligned at every step. */
+.sync-facts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 10px 18px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    /* card-subtle, not bg-subtle: in dark those are the same colour as the card itself, which
+       would leave this panel flat against it. */
+    background: var(--card-subtle);
+}
+
+.sync-fact { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+
+.sync-fact-label {
+    color: var(--fg-muted);
+    font-size: 11px;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+}
+
+.sync-fact-value { font-size: 14px; font-weight: 500; }
+
+.sync-fact-sub {
+    color: var(--fg-muted);
+    font-size: 12px;
+    overflow-wrap: anywhere;
+}
 
 .sync-warning { border-color: var(--warning, #d29922); }
 .sync-warning .meta { color: var(--fg-muted); font-size: 12px; margin-top: 4px; }
@@ -510,25 +656,45 @@ input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px;
 .sync-row .sync-issue {
     color: var(--warning, #d29922);
     font-size: 12px;
-    margin-top: 4px;
 }
 
-/* Actions sit in their own column and wrap as a block, so adding a button can't scatter the
-   others onto ragged lines the way a flat button list did. */
-.sync-actions {
+/* Footer: run/schedule on the left, links and edits on the right. Both groups wrap as blocks, so
+   adding a button can't scatter the others onto ragged lines the way a flat list did. */
+.sync-foot {
     display: flex;
-    flex-direction: column;
-    gap: 6px;
-    align-items: flex-end;
-    flex: 0 0 auto;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
 }
 
-.sync-actions-row {
+.sync-foot .spacer { flex: 1 1 auto; }
+
+.sync-foot-group {
     display: flex;
+    align-items: center;
     gap: 6px;
     flex-wrap: wrap;
-    justify-content: flex-end;
 }
+
+/* Sits in a row of buttons, so it needs their height to line up on the same baseline. */
+.sync-check {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 32px;
+    padding-inline: 4px;
+    color: var(--fg-muted);
+    font-size: 13px;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.sync-check input { margin: 0; cursor: pointer; }
+.sync-check:hover { color: var(--fg); }
+.sync-check input:disabled { cursor: default; }
+.sync-check:has(input:disabled) { cursor: default; opacity: .6; }
 
 .sync-row .btn.subtle {
     background: transparent;
@@ -546,22 +712,9 @@ input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px;
 .sync-row .btn.subtle.danger { color: var(--danger, #d1242f); }
 .sync-row .btn.active { border-color: var(--accent, #0969da); }
 
-.sync-details {
-    margin-top: 6px;
-    padding: 8px 10px;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    font-size: 12px;
-    display: grid;
-    gap: 3px;
-}
-
-.sync-details .muted { display: inline-block; min-width: 118px; color: var(--fg-muted); }
-
 .warn-text { color: var(--warning, #d29922); }
 
 .sync-log {
-    margin-top: 8px;
     font-size: 12px;
     color: var(--fg-muted);
 }

@@ -11,9 +11,9 @@
 @inject IGitProviderFactory Factory
 @inject SyncGate Gate
 
-<div class="page narrow">
+<div class="page sync-page">
     <div class="page-header">
-        <div>
+        <div class="header-text">
             <h1>Sync</h1>
             <span class="subtitle">Mirror a monitored repo to another server — creates the target repo if it's missing, then pushes whatever commits it's behind by.</span>
         </div>
@@ -84,9 +84,9 @@
     }
     else
     {
-        <div class="card">
-            <div class="repo-pick-toolbar">
-                <span class="muted">
+        <div class="card sync-toolbar-card">
+            <div class="sync-toolbar">
+                <span class="muted sync-toolbar-summary">
                     @rows.Count sync@(rows.Count == 1 ? "" : "s") configured
                     @if (BehindCount > 0)
                     {
@@ -100,46 +100,87 @@
                     {
                         <text> · @UpToDateCount up to date</text>
                     }
-                    <text> · </text><span title="Change this in Settings → Automatic sync">@AutoSyncSummary</span>
                 </span>
-                <span class="spacer" style="flex:1;"></span>
-                <select value="@filter" @onchange="OnFilterChanged" disabled="@isBusy"
-                        title="Show only the syncs in this state">
-                    <option value="@RowFilter.All">All (@rows.Count)</option>
-                    <option value="@RowFilter.Behind">Behind (@BehindCount)</option>
-                    <option value="@RowFilter.NeverSynced">Never run (@NeverSyncedCount)</option>
-                    <option value="@RowFilter.UpToDate">Up to date (@UpToDateCount)</option>
-                    <option value="@RowFilter.NeedsAttention">Needs attention (@BlockedRows.Count)</option>
-                </select>
-                @if (isChecking)
-                {
-                    <span class="spinner"></span>
-                    <span class="muted">Checking @checkedCount/@checkTotal…</span>
-                }
-                else if (!isBusy)
-                {
-                    <button class="btn" @onclick="CheckAllAsync"
-                            title="Reads each source repo's last-push time and compares it with that sync's last run">
-                        Check for changes
+                <div class="sync-toolbar-actions">
+                    <select value="@filter" @onchange="OnFilterChanged" disabled="@isBusy"
+                            title="Show only the syncs in this state">
+                        <option value="@RowFilter.All">All (@rows.Count)</option>
+                        <option value="@RowFilter.Behind">Behind (@BehindCount)</option>
+                        <option value="@RowFilter.NeverSynced">Never run (@NeverSyncedCount)</option>
+                        <option value="@RowFilter.UpToDate">Up to date (@UpToDateCount)</option>
+                        <option value="@RowFilter.NeedsAttention">Needs attention (@BlockedRows.Count)</option>
+                    </select>
+                    @if (isChecking)
+                    {
+                        <span class="spinner"></span>
+                        <span class="muted">Checking @checkedCount/@checkTotal…</span>
+                    }
+                    else if (!isBusy)
+                    {
+                        <button class="btn" @onclick="CheckAllAsync"
+                                title="Reads each source repo's last-push time and compares it with that sync's last run">
+                            Check for changes
+                        </button>
+                    }
+                    @if (isBusy)
+                    {
+                        <span class="spinner"></span>
+                        <button class="btn danger" @onclick="Cancel">Cancel</button>
+                    }
+                    else
+                    {
+                        <button class="btn" @onclick="RunBehindAsync" disabled="@(isChecking || AutoSyncRunning || BehindCount == 0)"
+                                title="@(BehindCount == 0
+                                    ? "Nothing is known to be behind — run Check for changes first"
+                                    : "Runs only the syncs whose source was pushed after their last run")">
+                            Sync behind (@BehindCount)
+                        </button>
+                        <button class="btn primary" @onclick="RunVisibleAsync" disabled="@(isChecking || AutoSyncRunning || RunnableVisible.Count == 0)">
+                            @(filter == RowFilter.All ? "Run all" : $"Run {RunnableVisible.Count} shown")
+                        </button>
+                    }
+                </div>
+            </div>
+
+            @* The schedule gets its own line: it's about what happens while the app is closed,
+               which is a different question from what the buttons above do right now. *@
+            <div class="sync-toolbar sync-toolbar-schedule">
+                <span class="muted sync-toolbar-summary">
+                    @if (autoSync.Enabled)
+                    {
+                        <text>@AutoSyncSummary</text>
+                        @if (ManualOnlyCount > 0)
+                        {
+                            <text> · </text>
+                            <span title="These syncs only move when you run them here">
+                                @ManualOnlyCount of @rows.Count set to manual only
+                            </span>
+                        }
+                    }
+                    else
+                    {
+                        <strong class="warn-text">Auto-sync is paused</strong>
+                        <text> — nothing syncs on a schedule until you resume. Running syncs by hand still works.</text>
+                    }
+                </span>
+                <div class="sync-toolbar-actions">
+                    <button class="btn @(autoSync.Enabled ? "" : "primary")" @onclick="ToggleAutoSyncPausedAsync"
+                            title="@(autoSync.Enabled
+                                ? "Stops every scheduled run without touching each sync's own setting"
+                                : "Puts the schedule back on — each sync's own auto-sync setting is unchanged")">
+                        @(autoSync.Enabled ? "Pause auto-sync" : "Resume auto-sync")
                     </button>
-                }
-                @if (isBusy)
-                {
-                    <span class="spinner"></span>
-                    <button class="btn danger" @onclick="Cancel">Cancel</button>
-                }
-                else
-                {
-                    <button class="btn" @onclick="RunBehindAsync" disabled="@(isChecking || AutoSyncRunning || BehindCount == 0)"
-                            title="@(BehindCount == 0
-                                ? "Nothing is known to be behind — run Check for changes first"
-                                : "Runs only the syncs whose source was pushed after their last run")">
-                        Sync behind (@BehindCount)
+                    <button class="btn" @onclick="() => SetAutoSyncForVisibleAsync(true)"
+                            disabled="@(isBusy || VisibleAutoSyncOff.Count == 0)"
+                            title="Turns auto-sync on for @BulkScope">
+                        Auto-sync @BulkScope
                     </button>
-                    <button class="btn primary" @onclick="RunVisibleAsync" disabled="@(isChecking || AutoSyncRunning || RunnableVisible.Count == 0)">
-                        @(filter == RowFilter.All ? "Run all" : $"Run {RunnableVisible.Count} shown")
+                    <button class="btn" @onclick="() => SetAutoSyncForVisibleAsync(false)"
+                            disabled="@(isBusy || VisibleAutoSyncOn.Count == 0)"
+                            title="Leaves @BulkScope for you to run by hand">
+                        Manual only
                     </button>
-                }
+                </div>
             </div>
         </div>
 
@@ -153,117 +194,153 @@
         @foreach (var row in VisibleRows)
         {
             <div class="card sync-row @(row.Blocked ? "sync-row-blocked" : "")" @key="row.Mapping.Id">
-                <div class="sync-body">
-                    @* Route is text only — pills live in .sync-status so a long repo name can wrap
-                       without shoving a badge (and then the buttons) out of the row. *@
+                @* Header: the route reads as the row's title, with the status badges pinned to the
+                   right of it. Everything else lives in its own band below, so a long repo name can
+                   wrap without dragging the facts or the buttons around with it. *@
+                <div class="sync-head">
                     <div class="sync-route">
                         <strong>@row.Mapping.Source.FullName</strong>
                         <span class="sync-arrow">→</span>
                         <strong>@row.Mapping.TargetFullName</strong>
                     </div>
-                    <div class="meta">
-                        @AccountLabel(row.Mapping.SourceAccountId) → @AccountLabel(row.Mapping.TargetAccountId)
-                        · @row.Mapping.BranchSummary
-                        @if (row.Mapping.IncludeTags)
+
+                    @* One badge at a time, most urgent first — a run result outranks the freshness
+                       estimate it just made stale. Duplicate-destination is the only badge that can
+                       stack, since it's about a different problem entirely. *@
+                    <div class="sync-status">
+                        @if (row.Status == RunStatus.Running)
                         {
-                            <text> · tags</text>
+                            <span class="spinner"></span>
                         }
-                        @if (row.Mapping.Force)
+                        else if (row.Status == RunStatus.Failed)
                         {
-                            <text> · force</text>
+                            <span title="@row.Message"><Pill Text="Failed" Type="PillType.Critical" /></span>
+                        }
+                        else if (row.Blocked)
+                        {
+                            <span title="@row.Issue"><Pill Text="Needs attention" Type="PillType.Warning" /></span>
+                        }
+                        else if (row.Status == RunStatus.Done)
+                        {
+                            <Pill Text="Synced" Type="PillType.Success" />
+                        }
+                        else if (row.Freshness == SyncFreshness.Behind)
+                        {
+                            <span title="@row.FreshnessDetail"><Pill Text="Behind" Type="PillType.Warning" /></span>
+                        }
+                        else if (row.Freshness == SyncFreshness.UpToDate)
+                        {
+                            <span title="@row.FreshnessDetail"><Pill Text="Up to date" Type="PillType.Success" /></span>
+                        }
+                        else if (row.Freshness == SyncFreshness.NeverSynced)
+                        {
+                            <span title="@row.FreshnessDetail"><Pill Text="Never run" Type="PillType.Info" /></span>
+                        }
+                        else
+                        {
+                            @* Unknown: no push time to compare against. Still worth a badge — an
+                               empty status column reads as "fine" when it means "no idea". *@
+                            <span title="@row.FreshnessDetail"><Pill Text="Not checked" Type="PillType.None" /></span>
+                        }
+
+                        @if (row.DuplicateDestination is not null)
+                        {
+                            <span title="@($"{AccountLabel(row.DuplicateDestination.SourceAccountId)} also syncs {row.DuplicateDestination.Source.FullName} to this same destination")">
+                                <Pill Text="Duplicate" Type="PillType.Warning" />
+                            </span>
                         }
                     </div>
+                </div>
 
-                    @if (row.ShowDetails)
+                @* What this sync is configured to do — one chip per setting rather than a run-on
+                   sentence, so the eye can skip the ones it doesn't care about. *@
+                <div class="sync-tags">
+                    <span class="sync-tag">
+                        @AccountLabel(row.Mapping.SourceAccountId)
+                        <span class="sync-arrow">→</span>
+                        @AccountLabel(row.Mapping.TargetAccountId)
+                    </span>
+                    <span class="sync-tag">@row.Mapping.BranchSummary</span>
+                    @if (row.Mapping.IncludeTags)
                     {
-                        <div class="sync-details">
-                            <div><span class="muted">Last run</span> @LastRunText(row)</div>
-                            <div><span class="muted">Source last push</span> @PushedAtText(row)</div>
-                            @if (row.FreshnessDetail is not null)
-                            {
-                                <div><span class="muted">Status</span> @row.FreshnessDetail</div>
-                            }
-                        </div>
+                        <span class="sync-tag">Tags</span>
                     }
-
-                    @if (row.Issue is not null)
+                    @if (row.Mapping.Force)
                     {
-                        <div class="sync-issue">
-                            @row.Issue
-                            @if (row.SupersededBy is not null)
-                            {
-                                <text>
-                                    The @AccountLabel(row.SupersededBy.SourceAccountId) sync already covers
-                                    @row.Mapping.TargetFullName, so this one is safe to delete.
-                                </text>
-                            }
-                            else if (row.RepointTo is not null)
-                            {
-                                <text>@row.Mapping.Source.FullName is monitored on @row.RepointTo.Label — move it there to fix this.</text>
-                            }
-                        </div>
+                        <span class="sync-tag" title="Refs are force-updated on the target">Force</span>
                     }
-
-                    @if (row.Log.Count > 0)
+                    @if (!row.Mapping.AutoSync)
                     {
-                        <details class="sync-log">
-                            <summary>Run log (@row.Log.Count)</summary>
-                            @foreach (var line in row.Log)
-                            {
-                                <div>@line</div>
-                            }
-                        </details>
+                        <span class="sync-tag muted-tag" title="The scheduled background run skips this sync">Manual only</span>
                     }
                 </div>
 
-                @* One status column, one badge at a time, most urgent first — a run result outranks
-                   the freshness estimate it just made stale. Duplicate-destination is the only
-                   badge that can stack, since it's about a different problem entirely. *@
-                <div class="sync-status">
-                    @if (row.Status == RunStatus.Running)
-                    {
-                        <span class="spinner"></span>
-                    }
-                    else if (row.Status == RunStatus.Failed)
-                    {
-                        <span title="@row.Message"><Pill Text="Failed" Type="PillType.Critical" /></span>
-                    }
-                    else if (row.Blocked)
-                    {
-                        <span title="@row.Issue"><Pill Text="Needs attention" Type="PillType.Warning" /></span>
-                    }
-                    else if (row.Status == RunStatus.Done)
-                    {
-                        <Pill Text="Synced" Type="PillType.Success" />
-                    }
-                    else if (row.Freshness == SyncFreshness.Behind)
-                    {
-                        <span title="@row.FreshnessDetail"><Pill Text="Behind" Type="PillType.Warning" /></span>
-                    }
-                    else if (row.Freshness == SyncFreshness.UpToDate)
-                    {
-                        <span title="@row.FreshnessDetail"><Pill Text="Up to date" Type="PillType.Success" /></span>
-                    }
-
-                    @if (row.DuplicateDestination is not null)
-                    {
-                        <span title="@($"{AccountLabel(row.DuplicateDestination.SourceAccountId)} also syncs {row.DuplicateDestination.Source.FullName} to this same destination")">
-                            <Pill Text="Duplicate" Type="PillType.Warning" />
-                        </span>
-                    }
+                @* The three timestamps that decide whether this sync has work to do, in a grid so
+                   they line up across every row instead of hiding behind a toggle. *@
+                <div class="sync-facts">
+                    <div class="sync-fact">
+                        <span class="sync-fact-label">Last run</span>
+                        <span class="sync-fact-value" title="@LastRunText(row)">@LastRunValue(row)</span>
+                        <span class="sync-fact-sub">@LastRunSub(row)</span>
+                    </div>
+                    <div class="sync-fact">
+                        <span class="sync-fact-label">Source last push</span>
+                        <span class="sync-fact-value" title="@PushedAtText(row)">@PushedValue(row)</span>
+                        <span class="sync-fact-sub">@PushedSub(row)</span>
+                    </div>
+                    <div class="sync-fact">
+                        <span class="sync-fact-label">Status</span>
+                        <span class="sync-fact-value @(row.Freshness == SyncFreshness.Behind ? "warn-text" : "")">@FreshnessLabel(row)</span>
+                        <span class="sync-fact-sub">@row.FreshnessDetail</span>
+                    </div>
                 </div>
 
-                <div class="sync-actions">
-                    <div class="sync-actions-row">
+                @if (row.Issue is not null)
+                {
+                    <div class="sync-issue">
+                        @row.Issue
+                        @if (row.SupersededBy is not null)
+                        {
+                            <text>
+                                The @AccountLabel(row.SupersededBy.SourceAccountId) sync already covers
+                                @row.Mapping.TargetFullName, so this one is safe to delete.
+                            </text>
+                        }
+                        else if (row.RepointTo is not null)
+                        {
+                            <text>@row.Mapping.Source.FullName is monitored on @row.RepointTo.Label — move it there to fix this.</text>
+                        }
+                    </div>
+                }
+
+                @if (row.Log.Count > 0)
+                {
+                    <details class="sync-log">
+                        <summary>Run log (@row.Log.Count)</summary>
+                        @foreach (var line in row.Log)
+                        {
+                            <div>@line</div>
+                        }
+                    </details>
+                }
+
+                @* Footer: what this row can do. Running it and deciding whether it runs itself sit
+                   together on the left; the links and the destructive edits keep to the right. *@
+                <div class="sync-foot">
+                    <div class="sync-foot-group">
                         <button class="btn primary" @onclick="() => RunOneAsync(row)"
                                 disabled="@(isBusy || AutoSyncRunning || row.Blocked)"
                                 title="@(row.Blocked ? row.Issue : "Push whatever the target is missing")">Sync now</button>
-                        <button class="btn @(row.ShowDetails ? "active" : "")" @onclick="() => row.ShowDetails = !row.ShowDetails"
-                                title="@LastRunText(row)">
-                            @LastSyncedLabel(row)
-                        </button>
+                        <label class="sync-check" title="@(row.Mapping.AutoSync
+                            ? "The scheduled background run picks this sync up when the source has been pushed since it last ran"
+                            : "The scheduled background run skips this sync — it only moves when you run it")">
+                            <input type="checkbox" checked="@row.Mapping.AutoSync" disabled="@isBusy"
+                                   @onchange="e => ToggleAutoSyncAsync(row, (bool)e.Value!)" />
+                            <span>Auto-sync when behind</span>
+                        </label>
                     </div>
-                    <div class="sync-actions-row">
+                    <span class="spacer"></span>
+                    <div class="sync-foot-group">
                         <button class="btn subtle" title="@(row.SourceUrl ?? "The source account is gone, so there's no link to open")"
                                 @onclick="() => OpenAsync(row.SourceUrl)" disabled="@(row.SourceUrl is null)">Source ↗</button>
                         <button class="btn subtle" title="@(row.TargetUrl ?? "The destination account is gone, so there's no link to open")"
@@ -325,7 +402,6 @@
 
         public SyncFreshness Freshness { get; set; }
         public string? FreshnessDetail { get; set; }
-        public bool ShowDetails { get; set; }
 
         public bool Blocked => this.Issue is not null;
     }
@@ -354,11 +430,22 @@
         get
         {
             if (!autoSync.Enabled)
-                return "auto-sync off";
+                return "Auto-sync is paused";
             var scope = autoSync.SyncAll ? "everything" : "behind only";
-            return $"auto-sync every {autoSync.IntervalHours}h ({scope})";
+            return $"Auto-sync every {autoSync.IntervalHours}h ({scope})";
         }
     }
+
+    /// <summary>Syncs the schedule will never pick up, whatever the global switch says.</summary>
+    int ManualOnlyCount => rows.Count(r => !r.Mapping.AutoSync);
+
+    List<SyncRow> VisibleAutoSyncOn => VisibleRows.Where(r => r.Mapping.AutoSync).ToList();
+    List<SyncRow> VisibleAutoSyncOff => VisibleRows.Where(r => !r.Mapping.AutoSync).ToList();
+
+    /// <summary>What the bulk buttons say they'll touch — the same "all vs shown" rule as Run all.</summary>
+    string BulkScope => filter == RowFilter.All
+        ? $"all {rows.Count}"
+        : $"the {VisibleRows.Count} shown";
 
     List<SyncRow> BlockedRows => rows.Where(r => r.Blocked).ToList();
     List<SyncRow> SupersededRows => rows.Where(r => r.Blocked && r.SupersededBy is not null).ToList();
@@ -521,13 +608,47 @@
         };
     }
 
-    static string LastSyncedLabel(SyncRow row)
-        => row.Mapping.LastSyncedUtc is { } when ? $"Synced {Ago(when)}" : "Never synced";
+    // The facts grid wants a short value with the detail underneath it, rather than one long
+    // sentence per cell — the columns only line up if every value is roughly the same width.
+
+    static string LastRunValue(SyncRow row)
+        => row.Status == RunStatus.Running
+            ? "Running…"
+            : row.Mapping.LastSyncedUtc is { } when ? Ago(when) : "Never";
+
+    static string LastRunSub(SyncRow row)
+    {
+        if (row.Status == RunStatus.Running)
+            return row.Message ?? "Working…";
+        if (row.Mapping.LastSyncedUtc is not { } when)
+            return "No first run yet";
+        return row.Mapping.LastResult ?? when.ToLocalTime().ToString("g");
+    }
+
+    static string PushedValue(SyncRow row)
+        => row.SourcePushedAt is { } when ? Ago(when) : "Unknown";
+
+    static string PushedSub(SyncRow row)
+    {
+        if (row.SourcePushedAt is not { } when)
+            return "Nothing has polled or checked this repo";
+        return row.Checked
+            ? when.ToLocalTime().ToString("g")
+            : $"{when.ToLocalTime():g} — from the last poll";
+    }
 
     static string PushedAtText(SyncRow row)
         => row.SourcePushedAt is { } when
             ? $"{when.ToLocalTime():g} ({Ago(when)}){(row.Checked ? "" : " — from the last dashboard poll")}"
             : "Unknown — nothing polled or checked this repo yet";
+
+    static string FreshnessLabel(SyncRow row) => row.Freshness switch
+    {
+        SyncFreshness.Behind => "Behind",
+        SyncFreshness.UpToDate => "Up to date",
+        SyncFreshness.NeverSynced => "Never run",
+        _ => "Unknown"
+    };
 
     static string Ago(DateTimeOffset when)
     {
@@ -701,6 +822,84 @@
             cts?.Dispose();
             cts = null;
             StateHasChanged();
+        }
+    }
+
+    /// <summary>
+    /// Flips this one mapping's auto-sync flag. Saved immediately — a checkbox that needed a Save
+    /// button would be the only setting on the page that did — and the store's Changed event
+    /// rebuilds the row in place, keeping its run log.
+    /// </summary>
+    async Task ToggleAutoSyncAsync(SyncRow row, bool value)
+    {
+        if (row.Mapping.AutoSync == value)
+            return;
+
+        try
+        {
+            await SyncStore.UpsertAsync(row.Mapping with { AutoSync = value });
+        }
+        catch (Exception ex)
+        {
+            await Toast.DangerAsync($"Couldn't save that: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Pauses or resumes the whole schedule. Deliberately separate from the per-sync checkboxes:
+    /// pausing is meant to be undone, so it must not overwrite the choices each sync already
+    /// carries. It's the same flag as Settings → Automatic sync, saved the same way.
+    /// </summary>
+    async Task ToggleAutoSyncPausedAsync()
+    {
+        var enabled = !autoSync.Enabled;
+        try
+        {
+            // Clear any back-off on the way back in, so resuming doesn't sit out an hour the
+            // paused schedule had already booked.
+            var updated = autoSync with
+            {
+                Enabled = enabled,
+                RetryAfterUtc = enabled ? null : autoSync.RetryAfterUtc
+            };
+
+            // Adopt it here rather than waiting for AutoSyncChanged to land: the toast below
+            // reads the summary, and the event handler is an async hop behind.
+            autoSync = updated;
+            await SyncStore.SaveAutoSyncAsync(updated);
+
+            // Pausing isn't a success, it's a state change the user should be able to see they made.
+            if (enabled)
+                await Toast.SuccessAsync($"Auto-sync resumed — {AutoSyncSummary.ToLowerInvariant()}");
+            else
+                await Toast.InfoAsync("Auto-sync paused — nothing will sync on a schedule");
+        }
+        catch (Exception ex)
+        {
+            await Toast.DangerAsync($"Couldn't save that: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Sets every visible sync's own auto-sync flag at once. Scoped to the filter for the same
+    /// reason Run all is: what the list is showing is what the buttons act on.
+    /// </summary>
+    async Task SetAutoSyncForVisibleAsync(bool value)
+    {
+        var changing = VisibleRows.Where(r => r.Mapping.AutoSync != value).Select(r => r.Mapping).ToList();
+        if (changing.Count == 0)
+            return;
+
+        try
+        {
+            await SyncStore.UpsertManyAsync(changing.Select(m => m with { AutoSync = value }).ToList());
+            await Toast.SuccessAsync(value
+                ? $"{changing.Count} sync{(changing.Count == 1 ? "" : "s")} will now sync automatically when behind"
+                : $"{changing.Count} sync{(changing.Count == 1 ? "" : "s")} set to manual only");
+        }
+        catch (Exception ex)
+        {
+            await Toast.DangerAsync($"Couldn't save that: {ex.Message}");
         }
     }
 

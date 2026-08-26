@@ -73,6 +73,23 @@ public sealed class ConfigStore(
         PreferencesChanged?.Invoke(this, EventArgs.Empty);
     }
 
+    public async Task<RepoViewMode> GetRepoViewAsync()
+    {
+        var doc = await LoadDashboardPrefsAsync().ConfigureAwait(false);
+        // Stored by name, so an unknown value (an older build, a hand-edited row) reads as the
+        // default rather than throwing or landing on whatever enum member happens to be 0.
+        return Enum.TryParse<RepoViewMode>(doc.RepoView, ignoreCase: true, out var view)
+            ? view
+            : RepoViewMode.Cards;
+    }
+
+    public async Task SetRepoViewAsync(RepoViewMode view)
+    {
+        var current = await LoadDashboardPrefsAsync().ConfigureAwait(false);
+        await SaveDashboardPrefsAsync(current with { RepoView = view.ToString() }).ConfigureAwait(false);
+        PreferencesChanged?.Invoke(this, EventArgs.Empty);
+    }
+
     public async Task<PersonGridSort> GetPersonGridSortAsync()
     {
         var doc = await LoadDashboardPrefsAsync().ConfigureAwait(false);

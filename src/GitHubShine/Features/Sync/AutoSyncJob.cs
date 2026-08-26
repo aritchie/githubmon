@@ -103,8 +103,10 @@ public sealed class AutoSyncJob(
             await config.ReloadAsync(ct).ConfigureAwait(false);
         await syncStore.ReloadAsync(ct).ConfigureAwait(false);
 
+        // Per-mapping opt-out first: a sync with auto-sync unticked is still perfectly runnable,
+        // it just never runs unattended — the Sync page's buttons remain the only way to move it.
         var runnable = syncStore.Mappings
-            .Where(m => SyncStatus.BlockingIssue(m, config.Accounts) is null)
+            .Where(m => m.AutoSync && SyncStatus.BlockingIssue(m, config.Accounts) is null)
             .ToList();
 
         if (runnable.Count == 0)
@@ -142,9 +144,20 @@ public sealed class AutoSyncJob(
         var failures = new List<string>();
         // Sequential, like the page's batch run: syncs are network- and disk-heavy, and two
         // sharing a source would contend on the same local cache repo.
+        var done = 0;
         foreach (var mapping in targets)
         {
             ct.ThrowIfCancellationRequested();
+
+            // Re-read the switch between mappings so "Pause auto-sync" stops a pass that's
+            // already under way, instead of only skipping the next one. One indexed row read per
+            // mapping, against a sync that just did a fetch and a push — not worth optimising.
+            if (!await this.StillEnabledAsync(ct).ConfigureAwait(false))
+            {
+                logger.LogInformation("[AutoSync] paused mid-pass — stopping after {Done} of {Total}", done, targets.Count);
+                break;
+            }
+
             try
             {
                 await engine.SyncAsync(mapping, progress: null, ct).ConfigureAwait(false);
@@ -159,11 +172,33 @@ public sealed class AutoSyncJob(
                 logger.LogWarning(ex, "[AutoSync] {Source} -> {Target} failed", mapping.Source.FullName, mapping.TargetFullName);
                 failures.Add(mapping.Source.FullName);
             }
+            done++;
         }
 
-        logger.LogInformation("[AutoSync] finished: {Ok} synced, {Failed} failed", targets.Count - failures.Count, failures.Count);
-        await this.NotifyFailuresAsync(failures, targets.Count).ConfigureAwait(false);
+        logger.LogInformation("[AutoSync] finished: {Ok} synced, {Failed} failed", done - failures.Count, failures.Count);
+        await this.NotifyFailuresAsync(failures, done).ConfigureAwait(false);
         await this.CompletePassAsync(ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Whether auto-sync is still switched on. Failing open (true) on a read error: a hiccup
+    /// reading one row shouldn't silently abandon a pass that's already doing useful work.
+    /// </summary>
+    async Task<bool> StillEnabledAsync(CancellationToken ct)
+    {
+        try
+        {
+            return (await syncStore.GetAutoSyncAsync(ct).ConfigureAwait(false)).Enabled;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "[AutoSync] couldn't re-read the enabled flag mid-pass");
+            return true;
+        }
     }
 
     /// <summary>

@@ -71,6 +71,14 @@
                     Off by default: a destination that has diverged fails loudly instead of losing commits.
                 </div>
             </div>
+
+            <div class="field">
+                <label><input type="checkbox" @bind="autoSync" /> Sync automatically when the destination is behind</label>
+                <div class="hint">
+                    On by default: the scheduled background run picks these up whenever their source has been
+                    pushed since they last ran. Untick to create them as manual-only syncs.
+                </div>
+            </div>
         </div>
 
         <div class="card">
@@ -181,6 +189,7 @@
     SyncBranchMode branchMode = SyncBranchMode.DefaultBranch;
     bool includeTags = true;
     bool force;
+    bool autoSync = true;
     bool isSaving;
     string filterText = "";
     string? errorMessage;
@@ -362,7 +371,8 @@
                     branchMode,
                     Branches: null,
                     includeTags,
-                    force));
+                    force,
+                    autoSync));
                 created++;
             }
 

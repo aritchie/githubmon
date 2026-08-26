@@ -35,6 +35,10 @@ public sealed record SyncMapping(
     // Force-update refs on the target (and, in All mode, delete target refs the source no longer
     // has). Off by default so a diverged target fails loudly instead of losing commits.
     bool Force = false,
+    // Whether the scheduled background pass may run this mapping. On by default so an existing
+    // (and every newly created) sync keeps auto-syncing; turning it off leaves the sync fully
+    // usable by hand, it just stops being picked up unattended.
+    bool AutoSync = true,
     DateTimeOffset? LastSyncedUtc = null,
     string? LastResult = null)
 {

@@ -163,6 +163,22 @@
             </div>
         </div>
 
+        <div class="card">
+            <div class="section-title">Schedule</div>
+
+            <div class="field">
+                <label>
+                    <input type="checkbox" @bind="autoSync" />
+                    Sync automatically when the target is behind
+                </label>
+                <div class="hint">
+                    On by default: the scheduled background run picks this sync up whenever the source has
+                    been pushed since it last ran. Untick it to keep this one manual — it still runs from
+                    the Sync page's buttons. The schedule itself lives in Settings → Automatic sync.
+                </div>
+            </div>
+        </div>
+
         <div class="actions-bar">
             <span class="status">@errorMessage</span>
             <button class="btn" @onclick="@(() => Nav.NavigateTo("/sync"))">Cancel</button>
@@ -194,6 +210,7 @@
     SyncBranchMode branchMode = SyncBranchMode.DefaultBranch;
     bool includeTags = true;
     bool force;
+    bool autoSync = true;
     bool isLoadingBranches;
     bool isSaving;
     string? errorMessage;
@@ -243,6 +260,7 @@
             branchMode = existing.BranchMode;
             includeTags = existing.IncludeTags;
             force = existing.Force;
+            autoSync = existing.AutoSync;
 
             // Show the saved branches immediately; "Load branches" merges in the live list.
             foreach (var branch in existing.Branches ?? new List<string>())
@@ -397,6 +415,7 @@
                 branchMode == SyncBranchMode.Named ? selectedBranches : null,
                 includeTags,
                 force,
+                autoSync,
                 previous?.LastSyncedUtc,
                 previous?.LastResult);
 

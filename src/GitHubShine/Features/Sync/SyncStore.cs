@@ -19,6 +19,14 @@ public interface ISyncStore
 
     Task ReloadAsync(CancellationToken ct = default);
     Task UpsertAsync(SyncMapping mapping, CancellationToken ct = default);
+
+    /// <summary>
+    /// Saves a batch as one edit: every mapping is written, then the cache is reloaded and
+    /// <see cref="Changed"/> raised exactly once. <see cref="UpsertAsync"/> in a loop would
+    /// reload (and repaint the list) per item, which for "auto-sync all 50" is visible.
+    /// </summary>
+    Task UpsertManyAsync(IReadOnlyCollection<SyncMapping> mappings, CancellationToken ct = default);
+
     Task RemoveAsync(string id, CancellationToken ct = default);
 
     /// <summary>
@@ -75,6 +83,17 @@ public sealed class SyncStore(IDocumentStore store) : ISyncStore
     public async Task UpsertAsync(SyncMapping mapping, CancellationToken ct = default)
     {
         await store.Upsert(mapping, cancellationToken: ct).ConfigureAwait(false);
+        await this.ReloadAsync(ct).ConfigureAwait(false);
+    }
+
+    public async Task UpsertManyAsync(IReadOnlyCollection<SyncMapping> mappings, CancellationToken ct = default)
+    {
+        if (mappings.Count == 0)
+            return;
+
+        foreach (var mapping in mappings)
+            await store.Upsert(mapping, cancellationToken: ct).ConfigureAwait(false);
+
         await this.ReloadAsync(ct).ConfigureAwait(false);
     }
 

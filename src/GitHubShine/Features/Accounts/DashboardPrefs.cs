@@ -15,6 +15,11 @@ namespace GitHubShine.Accounts;
 /// Nullable rather than defaulted so a row written before these fields existed
 /// deserializes cleanly.
 /// </param>
+/// <param name="RepoView">
+/// Which repository view the dashboard was last showing (<see cref="RepoViewMode"/>, stored by
+/// name). Null — a row written before this field existed, or a name that no longer parses —
+/// falls back to cards.
+/// </param>
 /// <param name="PersonSortColumnId">
 /// As <paramref name="SortColumnId"/>, for the people grid. A separate pair rather than a shared
 /// one because the two grids have disjoint column sets — a sort restored from the other grid
@@ -25,6 +30,7 @@ public sealed record DashboardPrefs(
     List<string> RepoOrder,
     string? SortColumnId = null,
     bool? SortDescending = null,
+    string? RepoView = null,
     string? PersonSortColumnId = null,
     bool? PersonSortDescending = null
 )

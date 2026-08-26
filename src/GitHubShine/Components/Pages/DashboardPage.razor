@@ -1,4 +1,7 @@
 @page "/"
+@* The Repositories page merged into this one — its route survives as a deep link that opens
+   the grid view directly, and as what the nav's old entry pointed at. *@
+@page "/repos"
 @implements IDisposable
 @inject IMediator Mediator
 @inject IConfigStore Config
@@ -58,7 +61,23 @@
             </div>
         }
 
-        <div class="section-title">Repositories <span class="muted" style="text-transform:none;font-weight:400;">— drag cards (or use ‹ ›) to reorder</span></div>
+        @* One heading for both views — the switch changes how the same repos are drawn, so it
+           belongs next to the list rather than up in the page header with Refresh. *@
+        <div class="section-title-row">
+            <div class="section-title">
+                Repositories
+                <span class="muted" style="text-transform:none;font-weight:400;">— @ViewHint</span>
+            </div>
+            <span class="spacer"></span>
+            <div class="view-switch" role="group" aria-label="Repository view">
+                <button class="view-switch-btn @(view == RepoViewMode.Cards ? "active" : "")"
+                        @onclick="() => SetViewAsync(RepoViewMode.Cards)"
+                        title="Cards you can drag into the order you want">Cards</button>
+                <button class="view-switch-btn @(view == RepoViewMode.Table ? "active" : "")"
+                        @onclick="() => SetViewAsync(RepoViewMode.Table)"
+                        title="One row per repo, sortable by any column">Table</button>
+            </div>
+        </div>
         <div class="repo-pick-toolbar">
             <input type="search" value="@searchText" @oninput="OnSearchChanged"
                    placeholder="Filter repos by name…" />
@@ -97,72 +116,169 @@
                 <span class="total-label">Builds failing</span>
             </div>
         </div>
+
         @if (visibleCards.Count == 0)
         {
             <div class="card empty-state">
                 <p>No repos match “@searchText”.</p>
             </div>
         }
-        <div class="repo-grid">
-            @foreach (var card in visibleCards)
-            {
-                <div class="card repo-card @(dragKey == card.Key ? "dragging" : "")"
-                     @key="card.Key"
-                     draggable="true"
-                     @ondragstart="() => dragKey = card.Key"
-                     @ondragend="() => dragKey = null"
-                     @ondragenter:preventDefault
-                     @ondragover:preventDefault
-                     @ondrop="() => OnDropOnAsync(card)">
-                    <div class="repo-card-head">
-                        <div style="min-width:0;">
-                            <div class="repo-name repo-link" title="Open repository on GitHub"
-                                 @onclick="() => Browser.OpenAsync(card.RepoUrl, BrowserLaunchMode.External)">@card.Title</div>
-                            <div class="account-label">@card.AccountLabel</div>
-                        </div>
-                        <span class="move-buttons">
-                            <button class="move-btn" title="Move earlier" disabled="@(cards.IndexOf(card) == 0)"
-                                    @onclick="() => MoveCardAsync(card, -1)">‹</button>
-                            <button class="move-btn" title="Move later" disabled="@(cards.IndexOf(card) == cards.Count - 1)"
-                                    @onclick="() => MoveCardAsync(card, +1)">›</button>
-                        </span>
-                    </div>
-                    <div class="pills">
-                        <VisibilityPill IsPrivate="card.IsPrivate" />
-                        <span class="pill-link" title="Open issues on GitHub"
-                              @onclick="() => Browser.OpenAsync(card.IssuesUrl, BrowserLaunchMode.External)">
-                            <Pill Text="@($"Issues {card.OpenIssues}")" Type="PillType.Info" />
-                        </span>
-                        <span class="pill-link" title="Open pull requests on GitHub"
-                              @onclick="() => Browser.OpenAsync(card.PullsUrl, BrowserLaunchMode.External)">
-                            <Pill Text="@($"PRs {card.OpenPullRequests}")" Type="PillType.Info" />
-                        </span>
-                    </div>
-                    <div class="pills repo-stats">
-                        <span class="stat stat-link" title="Open stargazers on GitHub"
-                              @onclick="() => Browser.OpenAsync(card.StarsUrl, BrowserLaunchMode.External)">★ @card.Stars</span>
-                        <span class="stat stat-link" title="Open forks on GitHub"
-                              @onclick="() => Browser.OpenAsync(card.ForksUrl, BrowserLaunchMode.External)">⑂ @card.Forks</span>
-                        <span class="stat stat-link" title="Open watchers on GitHub"
-                              @onclick="() => Browser.OpenAsync(card.WatchersUrl, BrowserLaunchMode.External)">👁 @card.Watchers</span>
-                    </div>
-                    @if (card.LatestRunStatus is not null)
-                    {
-                        <div class="pills">
-                            <span class="pill-link" title="Open this workflow run on GitHub"
-                                  @onclick="() => Browser.OpenAsync(card.LatestRunUrl ?? card.ActionsUrl, BrowserLaunchMode.External)">
-                                <Pill Text="@card.LatestRunStatus" Type="card.LatestRunPillType" />
-                                <span class="run-desc">@card.LatestRunDescription</span>
+        else if (view == RepoViewMode.Table)
+        {
+            <div class="card repo-table">
+                @* Re-keyed whenever the row set changes — the monitored repos, or the search
+                   filter: ServerData is only re-invoked by the grid itself (on a header click)
+                   or on its first render, so recreating the component is the only way to push a
+                   different set of rows into it. *@
+                <DataGrid TItem="RepoCardModel"
+                          @key="gridKey"
+                          ServerData="LoadAsync"
+                          SortMode="DataGridSortMode.Single"
+                          Dense="true"
+                          Hover="true"
+                          Striped="true"
+                          Bordered="true"
+                          NoRecordsText="No repositories are being monitored.">
+                    <Columns>
+                        @* Filtering is switched off on every column: the toolbar's search box
+                           filters this view, and with ServerData in play the grid would only hand
+                           its own filters back for the app to apply anyway. *@
+                        <PropertyColumn Property="c => c.Title" Title="Repository" Filterable="false">
+                            <CellTemplate>
+                                <span class="grid-link" title="Open repository"
+                                      @onclick="() => OpenAsync(context.Item.RepoUrl)">@context.Item.Title</span>
+                                @if (context.Item.HasError)
+                                {
+                                    <span title="@context.Item.ErrorMessage">
+                                        <Pill Text="Error" Type="PillType.Critical" />
+                                    </span>
+                                }
+                            </CellTemplate>
+                        </PropertyColumn>
+
+                        <PropertyColumn Property="c => c.AccountLabel" Title="Account" Filterable="false" />
+
+                        @* Bound to the rank rather than a bool so sorting reads as private-first
+                           and repos with no snapshot yet sort last instead of with the public ones. *@
+                        <PropertyColumn Property="c => c.VisibilityRank" Title="Visibility" Filterable="false">
+                            <CellTemplate>
+                                <VisibilityPill IsPrivate="context.Item.IsPrivate" />
+                            </CellTemplate>
+                        </PropertyColumn>
+
+                        <PropertyColumn Property="c => c.Stars" Title="Stars" Filterable="false">
+                            <CellTemplate>
+                                <span class="grid-link grid-num" title="Open stargazers"
+                                      @onclick="() => OpenAsync(context.Item.StarsUrl)">★ @context.Item.Stars</span>
+                            </CellTemplate>
+                        </PropertyColumn>
+
+                        <PropertyColumn Property="c => c.Forks" Title="Forks" Filterable="false">
+                            <CellTemplate>
+                                <span class="grid-link grid-num" title="Open forks"
+                                      @onclick="() => OpenAsync(context.Item.ForksUrl)">⑂ @context.Item.Forks</span>
+                            </CellTemplate>
+                        </PropertyColumn>
+
+                        <PropertyColumn Property="c => c.Watchers" Title="Watchers" Filterable="false">
+                            <CellTemplate>
+                                <span class="grid-link grid-num" title="Open watchers"
+                                      @onclick="() => OpenAsync(context.Item.WatchersUrl)">👁 @context.Item.Watchers</span>
+                            </CellTemplate>
+                        </PropertyColumn>
+
+                        <PropertyColumn Property="c => c.OpenIssues" Title="Open issues" Filterable="false">
+                            <CellTemplate>
+                                <span class="grid-link grid-num" title="Open issues"
+                                      @onclick="() => OpenAsync(context.Item.IssuesUrl)">@context.Item.OpenIssues</span>
+                            </CellTemplate>
+                        </PropertyColumn>
+
+                        <PropertyColumn Property="c => c.OpenPullRequests" Title="Open PRs" Filterable="false">
+                            <CellTemplate>
+                                <span class="grid-link grid-num" title="Open pull requests"
+                                      @onclick="() => OpenAsync(context.Item.PullsUrl)">@context.Item.OpenPullRequests</span>
+                            </CellTemplate>
+                        </PropertyColumn>
+
+                        @* Bound to the numeric rank, not the status text, so sorting puts failures
+                           first instead of ordering them alphabetically. *@
+                        <PropertyColumn Property="c => c.BuildRank" Title="Build" Filterable="false">
+                            <CellTemplate>
+                                <span class="grid-link" title="@context.Item.LatestRunDescription"
+                                      @onclick="() => OpenAsync(context.Item.LatestRunUrl ?? context.Item.ActionsUrl)">
+                                    <Pill Text="@(context.Item.LatestRunStatus ?? "No runs")"
+                                          Type="context.Item.LatestRunPillType" />
+                                </span>
+                            </CellTemplate>
+                        </PropertyColumn>
+                    </Columns>
+                </DataGrid>
+            </div>
+        }
+        else
+        {
+            <div class="repo-grid">
+                @foreach (var card in visibleCards)
+                {
+                    <div class="card repo-card @(dragKey == card.Key ? "dragging" : "")"
+                         @key="card.Key"
+                         draggable="true"
+                         @ondragstart="() => dragKey = card.Key"
+                         @ondragend="() => dragKey = null"
+                         @ondragenter:preventDefault
+                         @ondragover:preventDefault
+                         @ondrop="() => OnDropOnAsync(card)">
+                        <div class="repo-card-head">
+                            <div style="min-width:0;">
+                                <div class="repo-name repo-link" title="Open repository on GitHub"
+                                     @onclick="() => OpenAsync(card.RepoUrl)">@card.Title</div>
+                                <div class="account-label">@card.AccountLabel</div>
+                            </div>
+                            <span class="move-buttons">
+                                <button class="move-btn" title="Move earlier" disabled="@(cards.IndexOf(card) == 0)"
+                                        @onclick="() => MoveCardAsync(card, -1)">‹</button>
+                                <button class="move-btn" title="Move later" disabled="@(cards.IndexOf(card) == cards.Count - 1)"
+                                        @onclick="() => MoveCardAsync(card, +1)">›</button>
                             </span>
                         </div>
-                    }
-                    @if (card.HasError)
-                    {
-                        <div class="error">@card.ErrorMessage</div>
-                    }
-                </div>
-            }
-        </div>
+                        <div class="pills">
+                            <VisibilityPill IsPrivate="card.IsPrivate" />
+                            <span class="pill-link" title="Open issues on GitHub"
+                                  @onclick="() => OpenAsync(card.IssuesUrl)">
+                                <Pill Text="@($"Issues {card.OpenIssues}")" Type="PillType.Info" />
+                            </span>
+                            <span class="pill-link" title="Open pull requests on GitHub"
+                                  @onclick="() => OpenAsync(card.PullsUrl)">
+                                <Pill Text="@($"PRs {card.OpenPullRequests}")" Type="PillType.Info" />
+                            </span>
+                        </div>
+                        <div class="pills repo-stats">
+                            <span class="stat stat-link" title="Open stargazers on GitHub"
+                                  @onclick="() => OpenAsync(card.StarsUrl)">★ @card.Stars</span>
+                            <span class="stat stat-link" title="Open forks on GitHub"
+                                  @onclick="() => OpenAsync(card.ForksUrl)">⑂ @card.Forks</span>
+                            <span class="stat stat-link" title="Open watchers on GitHub"
+                                  @onclick="() => OpenAsync(card.WatchersUrl)">👁 @card.Watchers</span>
+                        </div>
+                        @if (card.LatestRunStatus is not null)
+                        {
+                            <div class="pills">
+                                <span class="pill-link" title="Open this workflow run on GitHub"
+                                      @onclick="() => OpenAsync(card.LatestRunUrl ?? card.ActionsUrl)">
+                                    <Pill Text="@card.LatestRunStatus" Type="card.LatestRunPillType" />
+                                    <span class="run-desc">@card.LatestRunDescription</span>
+                                </span>
+                            </div>
+                        }
+                        @if (card.HasError)
+                        {
+                            <div class="error">@card.ErrorMessage</div>
+                        }
+                    </div>
+                }
+            </div>
+        }
     }
 </div>
 
@@ -177,6 +293,23 @@
     string searchText = "";
     List<string> savedOrder = new();
 
+    RepoViewMode view = RepoViewMode.Cards;
+    RepoGridSort sort = RepoGridSort.Default;
+
+    // Bumped whenever the grid's row set changes; the search text rides along because filtering
+    // happens here, not in the grid. Both go into the DataGrid's @key — see the comment there.
+    int gridEpoch;
+    string gridKey => $"{gridEpoch}|{searchText}";
+
+    // False until the grid has asked for data once. The first ask carries an empty sort list
+    // (the grid starts unsorted), which must NOT be read as "the user cleared the sort" — that
+    // would overwrite the sort just restored from storage. Reset with every re-key.
+    bool gridLoaded;
+
+    string ViewHint => view == RepoViewMode.Table
+        ? $"click a column header to sort · sorted by {RepoGridColumns.Label(sort.ColumnId)} {(sort.Descending ? "↓" : "↑")}"
+        : "drag cards (or use ‹ ›) to reorder";
+
     // The cards visible after applying the search filter. A blank search shows everything.
     IReadOnlyList<RepoCardModel> visibleCards =>
         searchText.Length == 0
@@ -187,7 +320,64 @@
                 .ToList();
 
     void OnSearchChanged(ChangeEventArgs e)
-        => searchText = e.Value?.ToString() ?? "";
+    {
+        searchText = e.Value?.ToString() ?? "";
+        // The grid holds the rows it was handed; a changed filter is a changed row set.
+        InvalidateGrid();
+    }
+
+    /// <summary>Forces the grid to re-fetch (and re-sort) the next time it renders.</summary>
+    void InvalidateGrid()
+    {
+        gridEpoch++;
+        gridLoaded = false;
+    }
+
+    async Task SetViewAsync(RepoViewMode next)
+    {
+        if (view == next)
+            return;
+
+        view = next;
+        // Switching away disposes the grid, so the one that comes back is a new instance with
+        // no sort state of its own — it must be treated as a first load, not a cleared sort.
+        InvalidateGrid();
+        await Config.SetRepoViewAsync(next);
+    }
+
+    /// <summary>
+    /// The grid's data source. It is also the only hook the grid exposes onto its sort state, so
+    /// persisting here IS the "remember my sort" feature: the grid calls this on first render and
+    /// again after every header click.
+    /// </summary>
+    async Task<GridData<RepoCardModel>> LoadAsync(GridState state)
+    {
+        if (gridLoaded)
+        {
+            // A real header click. An empty list means the column was cycled past descending back
+            // to unsorted — fall back to the default rather than leaving the rows in whatever
+            // arbitrary order they happened to be in.
+            var def = state.SortDefinitions.FirstOrDefault();
+            var next = def is null
+                ? RepoGridSort.Default
+                : new RepoGridSort(def.ColumnId, def.Direction == DataGridSortDirection.Descending);
+
+            if (next != sort)
+            {
+                sort = next;
+                await Config.SetRepoGridSortAsync(sort);
+                // The grid re-renders itself after this returns, but the page does not — without
+                // this the heading keeps describing the previous sort.
+                StateHasChanged();
+            }
+        }
+        gridLoaded = true;
+
+        var ordered = sort.Order(visibleCards);
+        return new GridData<RepoCardModel>(ordered, ordered.Count);
+    }
+
+    Task OpenAsync(string url) => Browser.OpenAsync(url, BrowserLaunchMode.External);
 
     protected override async Task OnInitializedAsync()
     {
@@ -196,13 +386,34 @@
         Config.Changed += OnConfigChanged;
 
         savedOrder = (await Config.GetRepoOrderAsync()).ToList();
+        sort = await Config.GetRepoGridSortAsync();
+
+        // /repos was the old Repositories page: arriving by that route asks for the grid this
+        // once. Not persisted — a deep link shouldn't quietly rewrite the saved preference.
+        view = IsGridRoute ? RepoViewMode.Table : await Config.GetRepoViewAsync();
         await Config.ReloadAsync();
         RebuildCards();
+    }
+
+    /// <summary>True on the /repos alias, which asks for the grid whatever the preference says.</summary>
+    bool IsGridRoute => Nav.ToBaseRelativePath(Nav.Uri).Split('?', '#')[0].Trim('/') == "repos";
+
+    // "/" and "/repos" are the same component, so Blazor reuses this instance when navigating
+    // between them and OnInitializedAsync doesn't run again — the alias has to be honoured here
+    // as well or it only works when arriving from some other page.
+    protected override void OnParametersSet()
+    {
+        if (IsGridRoute && view != RepoViewMode.Table)
+        {
+            view = RepoViewMode.Table;
+            InvalidateGrid();
+        }
     }
 
     void RebuildCards()
     {
         var existing = cards.ToDictionary(c => c.Key);
+        var before = cards.Select(c => c.Key).ToList();
         cards.Clear();
 
         var desired = Config.Accounts
@@ -230,6 +441,11 @@
         statusText = cards.Count == 0
             ? null
             : $"{cards.Count} repo{(cards.Count == 1 ? "" : "s")} monitored";
+
+        // Only a changed row set needs the grid rebuilt — value updates reach it through the card
+        // instances it already holds, so a poll doesn't yank rows out from under the pointer.
+        if (!before.SequenceEqual(cards.Select(c => c.Key)))
+            InvalidateGrid();
     }
 
     async Task OnDropOnAsync(RepoCardModel target)

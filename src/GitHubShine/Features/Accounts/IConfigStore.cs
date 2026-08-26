@@ -25,6 +25,10 @@ public interface IConfigStore
     Task<RepoGridSort> GetRepoGridSortAsync();
     Task SetRepoGridSortAsync(RepoGridSort sort);
 
+    /// <summary>Which repository view the dashboard was last showing — cards or the grid.</summary>
+    Task<RepoViewMode> GetRepoViewAsync();
+    Task SetRepoViewAsync(RepoViewMode view);
+
     /// <summary>The people grid's last-used sort column and direction.</summary>
     Task<PersonGridSort> GetPersonGridSortAsync();
     Task SetPersonGridSortAsync(PersonGridSort sort);
