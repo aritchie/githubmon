@@ -129,18 +129,25 @@ public static class MauiProgram
             {
                 TypeInfoResolver = GitHubShineJsonContext.Default
             };
-            options.MapTypeToTable<MonitoredAccount>();
-            options.MapTypeToTable<StoredToken>();
-            options.MapTypeToTable<SeenFailedRun>();
-            options.MapTypeToTable<SeenInboxItem>();
-            options.MapTypeToTable<SeenWorkflowState>();
-            options.MapTypeToTable<DashboardPrefs>();
-            options.MapTypeToTable<NotificationPrefs>();
-            options.MapTypeToTable<SyncMapping>();
-            options.MapTypeToTable<AutoSyncPrefs>();
-            options.MapTypeToTable<ClonePrefs>();
-            options.MapTypeToTable<PollState>();
-            options.MapTypeToTable<FollowedPerson>();
+            // DocumentDb 13 dropped options.MapTypeToTable<T>() for the ConfigureModel /
+            // ConfigureDocument builder. `cfg.Table = cfg.TypeName` reproduces the old no-arg
+            // overload exactly: it resolved the table name through the same TypeNameResolver the
+            // builder now exposes as TypeName, so every table keeps the name it already has on
+            // disk and existing databases need no migration.
+            options.ConfigureModel(model => model
+                .Document<MonitoredAccount>(cfg => cfg.Table = cfg.TypeName)
+                .Document<StoredToken>(cfg => cfg.Table = cfg.TypeName)
+                .Document<SeenFailedRun>(cfg => cfg.Table = cfg.TypeName)
+                .Document<SeenInboxItem>(cfg => cfg.Table = cfg.TypeName)
+                .Document<SeenWorkflowState>(cfg => cfg.Table = cfg.TypeName)
+                .Document<DashboardPrefs>(cfg => cfg.Table = cfg.TypeName)
+                .Document<NotificationPrefs>(cfg => cfg.Table = cfg.TypeName)
+                .Document<SyncMapping>(cfg => cfg.Table = cfg.TypeName)
+                .Document<AutoSyncPrefs>(cfg => cfg.Table = cfg.TypeName)
+                .Document<ClonePrefs>(cfg => cfg.Table = cfg.TypeName)
+                .Document<PollState>(cfg => cfg.Table = cfg.TypeName)
+                .Document<FollowedPerson>(cfg => cfg.Table = cfg.TypeName)
+            );
         });
 
         // [Singleton]-attributed services (ConfigStore, SecureTokenVault,

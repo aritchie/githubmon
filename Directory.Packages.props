@@ -1,27 +1,27 @@
 <Project>
     <PropertyGroup>
         <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
-        <ShinyVersion>5.3.0</ShinyVersion>
-        <MauiLabsVersion>0.1.0-preview.12.26368.2</MauiLabsVersion>
-        <ControlsVersion>1.0.1-beta-0158</ControlsVersion>
-        <MauiVersion>10.0.90</MauiVersion>
+        <ShinyVersion>5.5.0</ShinyVersion>
+        <MauiLabsVersion>0.1.0-preview.12.26421.1</MauiLabsVersion>
+        <ControlsVersion>1.3.0-beta-0004</ControlsVersion>
+        <MauiVersion>10.0.100</MauiVersion>
     </PropertyGroup>
     <ItemGroup>
         <PackageVersion Include="Microsoft.Maui.Controls" Version="$(MauiVersion)"/>
         <PackageVersion Include="Microsoft.AspNetCore.Components.WebView.Maui" Version="$(MauiVersion)"/>
-        <PackageVersion Include="Microsoft.Extensions.Logging.Debug" Version="10.0.10"/>
-        <PackageVersion Include="Microsoft.Extensions.Logging.Console" Version="10.0.10"/>
-        <PackageVersion Include="Shiny.Mediator.Maui" Version="6.8.0"/>
+        <PackageVersion Include="Microsoft.Extensions.Logging.Debug" Version="10.0.11"/>
+        <PackageVersion Include="Microsoft.Extensions.Logging.Console" Version="10.0.11"/>
+        <PackageVersion Include="Shiny.Hosting.Maui" Version="$(ShinyVersion)"/>
         <PackageVersion Include="Shiny.Notifications" Version="$(ShinyVersion)"/>
         <PackageVersion Include="Shiny.Notifications.Linux" Version="$(ShinyVersion)"/>
         <PackageVersion Include="Shiny.Jobs" Version="$(ShinyVersion)"/>
-        <PackageVersion Include="Shiny.Hosting.Maui" Version="$(ShinyVersion)"/>
         <PackageVersion Include="Shiny.Core.Linux" Version="$(ShinyVersion)"/>
-        <PackageVersion Include="Shiny.Blazor.Controls" Version="$(ControlsVersion)"/>
+        <PackageVersion Include="Shiny.DocumentDb.Sqlite" Version="13.4.0"/>
+        <PackageVersion Include="Shiny.Extensions.Stores" Version="5.1.5"/>
+        <PackageVersion Include="Shiny.Extensions.DependencyInjection" Version="5.1.5"/>
         <PackageVersion Include="Shiny.Maui.Controls.Desktop" Version="$(ControlsVersion)"/>
-        <PackageVersion Include="Shiny.DocumentDb.Sqlite" Version="12.4.0"/>
-        <PackageVersion Include="Shiny.Extensions.Stores" Version="5.1.4"/>
-        <PackageVersion Include="Shiny.Extensions.DependencyInjection" Version="5.1.4"/>
+        <PackageVersion Include="Shiny.Blazor.Controls" Version="$(ControlsVersion)"/>
+        <PackageVersion Include="Shiny.Mediator.Maui" Version="6.8.0"/>
         <PackageVersion Include="Microsoft.Maui.Platforms.MacOS" Version="$(MauiLabsVersion)"/>
         <PackageVersion Include="Microsoft.Maui.Platforms.MacOS.Essentials" Version="$(MauiLabsVersion)"/>
         <PackageVersion Include="Microsoft.Maui.Platforms.MacOS.BlazorWebView" Version="$(MauiLabsVersion)"/>

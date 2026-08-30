@@ -14,8 +14,15 @@
     --danger: #f85149;
     --danger-bg: rgba(248, 81, 73, 0.1);
     --link: #4493f8;
+    --link-bg: rgba(68, 147, 248, 0.15);
     --focus: #1f6feb;
     --toolbar-tint: rgba(22, 27, 34, 0.72);
+    --success: #3fb950;
+    --success-bg: rgba(63, 185, 80, 0.15);
+    --warning: #d29922;
+    --warning-bg: rgba(210, 153, 34, 0.15);
+    --caution: #db6d28;
+    --caution-bg: rgba(219, 109, 40, 0.15);
 }
 
 @media (prefers-color-scheme: light) {
@@ -30,8 +37,89 @@
         --danger: #cf222e;
         --danger-bg: rgba(207, 34, 46, 0.08);
         --link: #0969da;
+        --link-bg: rgba(9, 105, 218, 0.1);
         --toolbar-tint: rgba(255, 255, 255, 0.72);
+        --success: #1a7f37;
+        --success-bg: rgba(26, 127, 55, 0.1);
+        --warning: #9a6700;
+        --warning-bg: rgba(154, 103, 0, 0.1);
+        --caution: #bc4c00;
+        --caution-bg: rgba(188, 76, 0, 0.1);
     }
+}
+
+/* ---------- Shiny.Blazor.Controls theme bridge ---------- */
+
+/* The controls (DataGrid, Pill, ShinyToolbar, ToastHost) paint from --shiny-color-*
+   tokens shipped in _content/Shiny.Blazor.Controls/css/shiny-theme.css, which index.html
+   now links. Left alone they'd carry Shiny's own blue/grey palette and its own
+   light/dark switch; remapping them onto the GitHub-flavored vars above keeps ONE source
+   of truth, so the controls follow the same media query as the rest of the app.
+
+   Selector is :root:root, not :root — shiny-theme.css sets its dark values under
+   `:root:not(.shiny-theme-light)` (specificity 0,2,0). A bare :root (0,1,0) here would
+   lose to it in dark mode; :root:root matches that specificity and, because app.css is
+   linked after the theme, wins on source order. */
+:root:root {
+    --shiny-color-primary: var(--link);
+    --shiny-color-on-primary: var(--accent-fg);
+    --shiny-color-primary-container: var(--focus);
+    --shiny-color-on-primary-container: var(--accent-fg);
+    --shiny-color-secondary-container: var(--card-subtle);
+    --shiny-color-on-secondary-container: var(--fg);
+
+    --shiny-color-background: var(--bg);
+    --shiny-color-on-background: var(--fg);
+    --shiny-color-surface: var(--card);
+    --shiny-color-on-surface: var(--fg);
+    --shiny-color-surface-variant: var(--card-subtle);
+    --shiny-color-on-surface-variant: var(--fg-muted);
+
+    /* Container tiers are derived from --fg so hover/raised states stay visible in both
+       themes without a second set of hard-coded colours. */
+    --shiny-color-surface-container-lowest: var(--bg);
+    --shiny-color-surface-container-low: var(--bg-subtle);
+    --shiny-color-surface-container: var(--card-subtle);
+    --shiny-color-surface-container-high: color-mix(in srgb, var(--fg) 8%, var(--card));
+    --shiny-color-surface-container-highest: color-mix(in srgb, var(--fg) 12%, var(--card));
+
+    --shiny-color-outline: var(--fg-muted);
+    --shiny-color-outline-variant: var(--border);
+    --shiny-color-inverse-surface: var(--fg);
+    --shiny-color-inverse-on-surface: var(--bg);
+
+    --shiny-color-error: var(--danger);
+    --shiny-color-on-error: var(--accent-fg);
+    --shiny-color-error-container: var(--danger-bg);
+    --shiny-color-on-error-container: var(--danger);
+    --shiny-color-critical: var(--danger);
+    --shiny-color-critical-container: var(--danger-bg);
+    --shiny-color-on-critical-container: var(--danger);
+
+    /* The on-* solids pair as foreground against the saturated --shiny-color-<name> base
+       (Shiny's filled-button variant). Every semantic colour bridged here is a mid-tone in
+       both themes, so white is the correct pairing — left unbridged they'd inherit Shiny's
+       own dark-mode values and land dark-on-dark. */
+    --shiny-color-on-success: var(--accent-fg);
+    --shiny-color-on-info: var(--accent-fg);
+    --shiny-color-on-warning: var(--accent-fg);
+    --shiny-color-on-critical: var(--accent-fg);
+
+    --shiny-color-success: var(--success);
+    --shiny-color-success-container: var(--success-bg);
+    --shiny-color-on-success-container: var(--success);
+
+    --shiny-color-info: var(--link);
+    --shiny-color-info-container: var(--link-bg);
+    --shiny-color-on-info-container: var(--link);
+
+    --shiny-color-warning: var(--warning);
+    --shiny-color-warning-container: var(--warning-bg);
+    --shiny-color-on-warning-container: var(--warning);
+
+    --shiny-color-caution: var(--caution);
+    --shiny-color-caution-container: var(--caution-bg);
+    --shiny-color-on-caution-container: var(--caution);
 }
 
 * { box-sizing: border-box; }
@@ -408,16 +496,6 @@ input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px;
    no padding, and clipped so the sticky header sits flush inside the rounded corners. */
 .repo-table { padding: 0; overflow: hidden; }
 
-/* Shiny.Blazor.Controls 1.0.1-beta-0148 applies the DataGrid's Height to the root
-   (.shiny-dg), but the element that scrolls is .shiny-dg-scroll — which is left
-   uncapped, so the rows overflow the root instead of scrolling inside it and the
-   sticky header never engages. Make the root a flex column and hand the leftover
-   height to the scroller. The .card prefix is needed to out-specify the control's
-   own scoped rule, which is loaded after this file. Drop once the control caps the
-   scroller itself. */
-.card.repo-table .shiny-dg { display: flex; flex-direction: column; min-height: 0; }
-.card.repo-table .shiny-dg-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; }
-
 /* Cells that open something on GitHub. Same affordance as the dashboard cards'
    .stat-link / .repo-link, scoped to the grid so it can't leak into other tables. */
 .repo-table .grid-link { cursor: pointer; transition: color 0.12s ease; }
@@ -429,7 +507,7 @@ input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px;
 
 /* ---------- People grid ---------- */
 
-/* Inherits the whole .repo-table treatment (frame, scroller height fix, .grid-link,
+/* Inherits the whole .repo-table treatment (frame, .grid-link,
    .grid-num); this block only adds what the identity column needs. */
 
 .person-cell { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
