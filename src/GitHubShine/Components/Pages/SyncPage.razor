@@ -102,6 +102,9 @@
                     }
                 </span>
                 <div class="sync-toolbar-actions">
+                    <input type="search" class="sync-search" value="@searchText" @oninput="OnSearchChanged"
+                           placeholder="Filter by repo name…"
+                           title="Matches either side of the route — source repo or destination" />
                     <select value="@filter" @onchange="OnFilterChanged" disabled="@isBusy"
                             title="Show only the syncs in this state">
                         <option value="@RowFilter.All">All (@rows.Count)</option>
@@ -136,7 +139,7 @@
                             Sync behind (@BehindCount)
                         </button>
                         <button class="btn primary" @onclick="RunVisibleAsync" disabled="@(isChecking || AutoSyncRunning || RunnableVisible.Count == 0)">
-                            @(filter == RowFilter.All ? "Run all" : $"Run {RunnableVisible.Count} shown")
+                            @(IsFiltered ? $"Run {RunnableVisible.Count} shown" : "Run all")
                         </button>
                     }
                 </div>
@@ -187,7 +190,14 @@
         @if (VisibleRows.Count == 0)
         {
             <div class="card">
-                <span class="muted">No syncs are @FilterLabel(filter).</span>
+                @if (HasSearch)
+                {
+                    <span class="muted">No syncs match "@searchText.Trim()"@(filter == RowFilter.All ? "" : $" and are {FilterLabel(filter)}").</span>
+                }
+                else
+                {
+                    <span class="muted">No syncs are @FilterLabel(filter).</span>
+                }
             </div>
         }
 
@@ -420,6 +430,11 @@
 
     RowFilter filter = RowFilter.All;
 
+    /// <summary>Free-text narrowing, applied on top of the state picker rather than instead of it.</summary>
+    string searchText = "";
+
+    bool HasSearch => !string.IsNullOrWhiteSpace(searchText);
+
     AutoSyncPrefs autoSync = AutoSyncPrefs.Default;
 
     /// <summary>True while the scheduled background run owns the gate — this page can't run then.</summary>
@@ -443,9 +458,12 @@
     List<SyncRow> VisibleAutoSyncOff => VisibleRows.Where(r => !r.Mapping.AutoSync).ToList();
 
     /// <summary>What the bulk buttons say they'll touch — the same "all vs shown" rule as Run all.</summary>
-    string BulkScope => filter == RowFilter.All
-        ? $"all {rows.Count}"
-        : $"the {VisibleRows.Count} shown";
+    string BulkScope => IsFiltered
+        ? $"the {VisibleRows.Count} shown"
+        : $"all {rows.Count}";
+
+    /// <summary>True when either the state picker or the search box is narrowing the list.</summary>
+    bool IsFiltered => filter != RowFilter.All || HasSearch;
 
     List<SyncRow> BlockedRows => rows.Where(r => r.Blocked).ToList();
     List<SyncRow> SupersededRows => rows.Where(r => r.Blocked && r.SupersededBy is not null).ToList();
@@ -464,8 +482,13 @@
 
     bool Matches(SyncRow row)
     {
-        // A row this page has just run stays put whatever the filter says: syncing a "behind" row
-        // makes it up to date, and having it (and its run log) vanish mid-run reads as a crash.
+        // The search box wins over everything: it's an explicit "show me these", so a row the user
+        // has typed past stays gone even while it runs.
+        if (!MatchesSearch(row))
+            return false;
+
+        // A row this page has just run stays put whatever the state picker says: syncing a "behind"
+        // row makes it up to date, and having it (and its run log) vanish mid-run reads as a crash.
         if (row.Status != RunStatus.Idle)
             return true;
 
@@ -479,6 +502,17 @@
         };
     }
 
+    /// <summary>Matches either end of the route — you look for a sync by whichever name you know.</summary>
+    bool MatchesSearch(SyncRow row)
+    {
+        if (!HasSearch)
+            return true;
+
+        var text = searchText.Trim();
+        return row.Mapping.Source.FullName.Contains(text, StringComparison.OrdinalIgnoreCase)
+            || row.Mapping.TargetFullName.Contains(text, StringComparison.OrdinalIgnoreCase);
+    }
+
     static string FilterLabel(RowFilter value) => value switch
     {
         RowFilter.Behind => "behind — try Check for changes",
@@ -490,6 +524,8 @@
 
     void OnFilterChanged(ChangeEventArgs e)
         => filter = Enum.TryParse<RowFilter>(e.Value?.ToString(), out var value) ? value : RowFilter.All;
+
+    void OnSearchChanged(ChangeEventArgs e) => searchText = e.Value?.ToString() ?? "";
 
     protected override async Task OnInitializedAsync()
     {

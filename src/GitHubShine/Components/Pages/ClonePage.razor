@@ -109,8 +109,23 @@
     {
         <div class="card">
             <div class="repo-pick-toolbar">
-                <button class="btn" @onclick="SelectAll" disabled="@IsLocked">Select all</button>
-                <button class="btn" @onclick="ClearAll" disabled="@IsLocked">Clear</button>
+                <input type="search" value="@filterText" @oninput="OnFilterChanged" disabled="@IsLocked"
+                       placeholder="Filter repos by name…" />
+                <select value="@accountFilter" @onchange="OnAccountFilterChanged" disabled="@IsLocked">
+                    <option value="">All accounts</option>
+                    @foreach (var account in Config.Accounts)
+                    {
+                        <option value="@account.Id">@account.Label</option>
+                    }
+                </select>
+            </div>
+
+            <div class="repo-pick-toolbar">
+                @* The three pickers act on what the filter is showing, so narrowing the list is how
+                   you pick a subset without clicking every row. What stays ticked behind the filter
+                   still runs — the line below says how many that is. *@
+                <button class="btn" @onclick="SelectAll" disabled="@IsLocked">Select all@(IsFiltered ? " shown" : "")</button>
+                <button class="btn" @onclick="ClearAll" disabled="@IsLocked">Clear@(IsFiltered ? " shown" : "")</button>
                 <button class="btn" @onclick="SelectOutOfDate" disabled="@(IsLocked || OutOfDateCount == 0)">
                     Select out of date@(OutOfDateCount > 0 ? $" ({OutOfDateCount})" : "")
                 </button>
@@ -144,6 +159,14 @@
                 else
                 {
                     <text>@SelectedCount of @rows.Count selected</text>
+                    @if (IsFiltered)
+                    {
+                        <text> · @Filtered.Count shown</text>
+                        @if (HiddenSelectedCount > 0)
+                        {
+                            <text> · </text><strong>@HiddenSelectedCount selected but hidden by the filter</strong>
+                        }
+                    }
                     @* Only worth saying once there's a count on screen that could be stale — with
                        nothing cloned yet, every row reads "Not cloned" and no fetch would change that. *@
                     @if (rows.Any(r => r.Status is { Kind: CloneStatusKind.Tracking }))
@@ -165,7 +188,11 @@
             </div>
 
             <div class="repo-pick-list">
-                @foreach (var row in rows)
+                @if (Filtered.Count == 0)
+                {
+                    <div class="repo-pick-row"><span class="muted">No repos match the filter.</span></div>
+                }
+                @foreach (var row in Filtered)
                 {
                     <div class="repo-pick-row clone-row" @key="row.Key">
                         <div class="clone-main">
@@ -283,6 +310,8 @@
     readonly List<string> log = new();
 
     ClonePrefs prefs = ClonePrefs.Default;
+    string filterText = "";
+    string accountFilter = "";
     bool isBusy;
     bool isScanning;
     bool gitMissing;
@@ -310,7 +339,32 @@
     bool IsLocked => isBusy || isScanning;
 
     int SelectedCount => rows.Count(r => r.Selected);
-    int OutOfDateCount => rows.Count(r => r.Status is { NeedsUpdate: true });
+    int OutOfDateCount => Filtered.Count(r => r.Status is { NeedsUpdate: true });
+
+    bool IsFiltered => !string.IsNullOrWhiteSpace(filterText) || !string.IsNullOrEmpty(accountFilter);
+
+    /// <summary>The rows on screen. The select buttons act on these, not on every configured repo.</summary>
+    List<CloneRow> Filtered
+    {
+        get
+        {
+            IEnumerable<CloneRow> query = rows;
+            if (!string.IsNullOrEmpty(accountFilter))
+                query = query.Where(r => r.Account.Id == accountFilter);
+            if (!string.IsNullOrWhiteSpace(filterText))
+            {
+                var text = filterText.Trim();
+                query = query.Where(r => r.Repo.FullName.Contains(text, StringComparison.OrdinalIgnoreCase));
+            }
+            return query.ToList();
+        }
+    }
+
+    /// <summary>Rows still ticked behind the filter — a run takes them too, so the hint mentions them.</summary>
+    int HiddenSelectedCount => IsFiltered ? SelectedCount - Filtered.Count(r => r.Selected) : 0;
+
+    void OnFilterChanged(ChangeEventArgs e) => filterText = e.Value?.ToString() ?? "";
+    void OnAccountFilterChanged(ChangeEventArgs e) => accountFilter = e.Value?.ToString() ?? "";
 
     /// <summary>
     /// Branch names seen across the working copies already on disk, offered as suggestions for the
@@ -491,12 +545,16 @@
         _ => ("Skipped", PillType.Warning)
     };
 
-    void SelectAll() => rows.ForEach(r => r.Selected = true);
-    void ClearAll() => rows.ForEach(r => r.Selected = false);
+    void SelectAll() => Filtered.ForEach(r => r.Selected = true);
+    void ClearAll() => Filtered.ForEach(r => r.Selected = false);
     void Cancel() => cts?.Cancel();
 
-    /// <summary>Ticks exactly the repos with something to collect, and unticks everything else.</summary>
-    void SelectOutOfDate() => rows.ForEach(r => r.Selected = r.Status is { NeedsUpdate: true });
+    /// <summary>
+    /// Ticks exactly the shown repos with something to collect, and unticks the rest of them.
+    /// Rows the filter is hiding keep whatever they were — untangling that from a filtered view
+    /// would be worse than the hint that reports how many are still ticked out of sight.
+    /// </summary>
+    void SelectOutOfDate() => Filtered.ForEach(r => r.Selected = r.Status is { NeedsUpdate: true });
 
     async Task ChooseFolderAsync()
     {

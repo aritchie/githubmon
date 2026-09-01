@@ -619,6 +619,14 @@ input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px;
     margin-left: auto;
 }
 
+/* The search box sits with the run controls but shouldn't stretch like the summary does — a fixed
+   basis that can shrink keeps the buttons on the same line until the window really is narrow. */
+.sync-toolbar-actions input[type="search"] {
+    flex: 0 1 220px;
+    min-width: 140px;
+    width: auto;
+}
+
 /* The schedule line is about what happens with the app closed — separated from the run controls
    above it so the two aren't read as one row of buttons. */
 .sync-toolbar-schedule {

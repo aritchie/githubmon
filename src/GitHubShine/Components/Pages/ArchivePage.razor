@@ -25,9 +25,30 @@
     {
         <div class="card">
             <div class="repo-pick-toolbar">
-                <button class="btn" @onclick="SelectAll" disabled="@isBusy">Select all</button>
-                <button class="btn" @onclick="ClearAll" disabled="@isBusy">Clear</button>
-                <span class="muted">@SelectedCount of @rows.Count selected</span>
+                <input type="search" value="@filterText" @oninput="OnFilterChanged" disabled="@isBusy"
+                       placeholder="Filter repos by name…" />
+                <select value="@accountFilter" @onchange="OnAccountFilterChanged" disabled="@isBusy">
+                    <option value="">All accounts</option>
+                    @foreach (var account in Config.Accounts)
+                    {
+                        <option value="@account.Id">@account.Label</option>
+                    }
+                </select>
+            </div>
+
+            <div class="repo-pick-toolbar">
+                @* "Select all" means the rows on screen, so a filter is the way to pick a subset
+                   without clicking each one. Anything selected behind the filter still downloads,
+                   which is why the count below says how many of those there are. *@
+                <button class="btn" @onclick="SelectAll" disabled="@isBusy">Select all@(IsFiltered ? " shown" : "")</button>
+                <button class="btn" @onclick="ClearAll" disabled="@isBusy">Clear@(IsFiltered ? " shown" : "")</button>
+                <span class="muted">
+                    @SelectedCount of @rows.Count selected@(IsFiltered ? $" · {Filtered.Count} shown" : "")
+                    @if (HiddenSelectedCount > 0)
+                    {
+                        <text> · </text><strong>@HiddenSelectedCount hidden by the filter</strong>
+                    }
+                </span>
                 <span class="spacer" style="flex:1;"></span>
                 @if (isBusy)
                 {
@@ -49,7 +70,11 @@
             }
 
             <div class="repo-pick-list">
-                @foreach (var row in rows)
+                @if (Filtered.Count == 0)
+                {
+                    <div class="repo-pick-row"><span class="muted">No repos match the filter.</span></div>
+                }
+                @foreach (var row in Filtered)
                 {
                     <label class="repo-pick-row" @key="row.Key">
                         <input type="checkbox" checked="@row.Selected" disabled="@isBusy"
@@ -94,12 +119,39 @@
     }
 
     readonly List<ArchiveRow> rows = new();
+    string filterText = "";
+    string accountFilter = "";
     bool isBusy;
     int doneCount;
     int totalToDownload;
     CancellationTokenSource? cts;
 
     int SelectedCount => rows.Count(r => r.Selected);
+
+    bool IsFiltered => !string.IsNullOrWhiteSpace(filterText) || !string.IsNullOrEmpty(accountFilter);
+
+    /// <summary>Rows currently on screen. Everything the buttons act on comes from here.</summary>
+    List<ArchiveRow> Filtered
+    {
+        get
+        {
+            IEnumerable<ArchiveRow> query = rows;
+            if (!string.IsNullOrEmpty(accountFilter))
+                query = query.Where(r => r.Account.Id == accountFilter);
+            if (!string.IsNullOrWhiteSpace(filterText))
+            {
+                var text = filterText.Trim();
+                query = query.Where(r => r.Repo.FullName.Contains(text, StringComparison.OrdinalIgnoreCase));
+            }
+            return query.ToList();
+        }
+    }
+
+    /// <summary>Selected rows the filter is hiding — they still download, so the count says so.</summary>
+    int HiddenSelectedCount => IsFiltered ? SelectedCount - Filtered.Count(r => r.Selected) : 0;
+
+    void OnFilterChanged(ChangeEventArgs e) => filterText = e.Value?.ToString() ?? "";
+    void OnAccountFilterChanged(ChangeEventArgs e) => accountFilter = e.Value?.ToString() ?? "";
 
     protected override async Task OnInitializedAsync()
     {
@@ -128,8 +180,8 @@
             }
         });
 
-    void SelectAll() => rows.ForEach(r => r.Selected = true);
-    void ClearAll() => rows.ForEach(r => r.Selected = false);
+    void SelectAll() => Filtered.ForEach(r => r.Selected = true);
+    void ClearAll() => Filtered.ForEach(r => r.Selected = false);
     void Cancel() => cts?.Cancel();
 
     async Task DownloadAsync()
