@@ -137,6 +137,13 @@
 
 	<ItemGroup Condition="'$(_IsMobile)' != 'true'">
 		<PackageReference Include="Shiny.Maui.Controls.Desktop"/>
+
+		<!-- IStartupService — "launch at login" (Windows HKCU Run key, macOS SMAppService login
+		     items, Linux ~/.config/autostart). Desktop-only on purpose: the package has iOS and
+		     Android assets, but there every call just returns NotSupported and the Android one
+		     drags in the Play Review + AndroidX LiveData bindings for nothing. The mobile heads
+		     get StartupSettings' no-op implementation instead — see Features/Settings. -->
+		<PackageReference Include="Shiny.Extensions.MauiHosting"/>
 	</ItemGroup>
 
 	<!-- Shiny's MAUI host (UseShiny). Only referenced on the heads it actually supports — its

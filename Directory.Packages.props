@@ -5,6 +5,9 @@
         <MauiLabsVersion>0.1.0-preview.12.26421.1</MauiLabsVersion>
         <ControlsVersion>1.3.0-beta-0004</ControlsVersion>
         <MauiVersion>10.0.100</MauiVersion>
+        <!-- Shiny.Extensions.* travel together: MauiHosting depends on DependencyInjection at its
+             own exact version, so a lower pin on the direct reference is an NU1605 downgrade. -->
+        <ShinyExtensionsVersion>5.2.1</ShinyExtensionsVersion>
     </PropertyGroup>
     <ItemGroup>
         <PackageVersion Include="Microsoft.Maui.Controls" Version="$(MauiVersion)"/>
@@ -17,8 +20,12 @@
         <PackageVersion Include="Shiny.Jobs" Version="$(ShinyVersion)"/>
         <PackageVersion Include="Shiny.Core.Linux" Version="$(ShinyVersion)"/>
         <PackageVersion Include="Shiny.DocumentDb.Sqlite" Version="13.4.0"/>
-        <PackageVersion Include="Shiny.Extensions.Stores" Version="5.1.5"/>
-        <PackageVersion Include="Shiny.Extensions.DependencyInjection" Version="5.1.5"/>
+        <PackageVersion Include="Shiny.Extensions.Stores" Version="$(ShinyExtensionsVersion)"/>
+        <PackageVersion Include="Shiny.Extensions.DependencyInjection" Version="$(ShinyExtensionsVersion)"/>
+        <!-- IStartupService (launch at login) for the desktop heads. Ships a net10.0-macos asset,
+             so the labs AppKit head is covered; the GTK head takes the plain net10.0 one, which
+             carries the XDG autostart implementation. -->
+        <PackageVersion Include="Shiny.Extensions.MauiHosting" Version="$(ShinyExtensionsVersion)"/>
         <PackageVersion Include="Shiny.Maui.Controls.Desktop" Version="$(ControlsVersion)"/>
         <PackageVersion Include="Shiny.Blazor.Controls" Version="$(ControlsVersion)"/>
         <PackageVersion Include="Shiny.Mediator.Maui" Version="6.8.0"/>

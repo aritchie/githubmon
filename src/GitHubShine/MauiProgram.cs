@@ -157,6 +157,19 @@ public static class MauiProgram
 #if !MOBILE
         // System-tray / menu-bar host is desktop-only (Shiny.Maui.Controls.Desktop).
         builder.Services.AddSingletonAsImplementedInterfaces<TrayIconHost>();
+
+        // Shiny.Extensions.MauiHosting's IStartupService — the "start with the computer" toggle on
+        // the settings page (via IStartupSettings, which is what the shared Blazor UI injects).
+        // Identifier is the Windows Run value name and the Linux ~/.config/autostart file name, so
+        // it must stay stable: changing it orphans the entry users already have rather than
+        // updating it. macOS ignores both — SMAppService registers the running bundle by identity.
+        // No Arguments: the app has no "started at login" mode to switch into, so a marker like
+        // --autostart would only be one more thing to keep in sync.
+        builder.AddStartupService(opts =>
+        {
+            opts.Identifier = "GitHubShine";
+            opts.DisplayName = "GitHub Shine";
+        });
 #endif
 
         // JobManager constructor-injects IBattery and IConnectivity (it evaluates the
