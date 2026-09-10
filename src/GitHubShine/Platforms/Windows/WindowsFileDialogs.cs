@@ -18,7 +18,7 @@ public sealed class WindowsFileDialogs : IFileDialogs
                 SuggestedFileName = suggestedFileName
             };
             // FileSavePicker throws without at least one file-type choice.
-            picker.FileTypeChoices.Add("GitHub Shine backup", new List<string> { ".db" });
+            picker.FileTypeChoices.Add("GitHub Shine backup", new List<string> { ".json" });
             InitializeWithWindow(picker);
             var file = await picker.PickSaveFileAsync();
             return file?.Path;
@@ -31,7 +31,10 @@ public sealed class WindowsFileDialogs : IFileDialogs
             {
                 SuggestedStartLocation = PickerLocationId.DocumentsLibrary
             };
-            // FileOpenPicker throws without at least one filter; offer .db and all files.
+            // FileOpenPicker throws without at least one filter. .db is still offered so a
+            // backup taken before the format changed can be picked (RestoreFromAsync sniffs the
+            // file and reads either), and "*" for anything renamed along the way.
+            picker.FileTypeFilter.Add(".json");
             picker.FileTypeFilter.Add(".db");
             picker.FileTypeFilter.Add("*");
             InitializeWithWindow(picker);

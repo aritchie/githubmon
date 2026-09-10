@@ -19,6 +19,12 @@ public interface INotificationPrefsStore
     /// <summary>The saved preferences, or the defaults when nothing has been saved yet. Cached after the first read.</summary>
     Task<NotificationPrefs> GetAsync(CancellationToken ct = default);
 
+    /// <summary>
+    /// Drops the cache and re-reads, raising <see cref="Changed"/>. For when the row changed
+    /// underneath this store rather than through it — a database restore.
+    /// </summary>
+    Task ReloadAsync(CancellationToken ct = default);
+
     Task SaveAsync(NotificationPrefs prefs, CancellationToken ct = default);
 
     /// <summary>Shorthand for "should this category post right now" — false when muted or switched off.</summary>
@@ -72,6 +78,13 @@ public sealed class NotificationPrefsStore(
         {
             this.gate.Release();
         }
+    }
+
+    public async Task ReloadAsync(CancellationToken ct = default)
+    {
+        this.loaded = false;
+        await this.GetAsync(ct).ConfigureAwait(false);
+        this.Changed?.Invoke(this, EventArgs.Empty);
     }
 
     public async Task SaveAsync(NotificationPrefs prefs, CancellationToken ct = default)

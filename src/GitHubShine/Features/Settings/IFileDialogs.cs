@@ -39,7 +39,7 @@ public sealed class MobileFileDialogs : IFileDialogs
     public async Task<string?> PickOpenPathAsync()
     {
         // FilePicker copies the chosen file into the app sandbox and FullPath points at that
-        // local copy — directly readable by the SQLite ATTACH in RestoreFromAsync.
+        // local copy — a real path RestoreFromAsync can open and stream.
         var result = await FilePicker.Default.PickAsync();
         return result?.FullPath;
     }

@@ -560,7 +560,7 @@
     {
         try
         {
-            var path = await FileDialogs.PickSavePathAsync($"githubshine-backup-{DateTime.Now:yyyyMMdd}.db");
+            var path = await FileDialogs.PickSavePathAsync($"githubshine-backup-{DateTime.Now:yyyyMMdd}.json");
             if (path is null)
                 return;
             await Backup.BackupToAsync(path);
@@ -584,7 +584,7 @@
             if (path is null)
                 return;
             var rows = await Backup.RestoreFromAsync(path);
-            await Toast.SuccessAsync($"Restored {rows} record(s) — accounts, tokens and card order included");
+            await Toast.SuccessAsync($"Restored {rows} record(s) — accounts, tokens, people, sync mappings and preferences");
         }
         catch (Exception ex)
         {
