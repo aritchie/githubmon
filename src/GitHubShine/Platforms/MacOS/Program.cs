@@ -12,6 +12,7 @@ public class Program : MacOSMauiApplication
 	public override void DidFinishLaunching(NSNotification notification)
 	{
 		base.DidFinishLaunching(notification);
+		GitHubShine.Platforms.MacOS.SingleInstance.ListenForHandOff();
 
 		// When the last real window closes, drop out of the Dock and live only in
 		// the menu-bar tray (accessory apps have no Dock icon and no Cmd+Tab entry).
@@ -54,6 +55,12 @@ public class Program : MacOSMauiApplication
 	public static void Main(string[] args)
 	{
 		NSApplication.Init();
+
+		// A second launch (notification tap, Finder, `open -n`, another build of the bundle)
+		// surfaces the copy that's already running instead of standing up a rival one.
+		if (GitHubShine.Platforms.MacOS.SingleInstance.HandOffToRunningInstance())
+			return;
+
 		NSApplication.SharedApplication.Delegate = new Program();
 		NSApplication.Main(args);
 	}

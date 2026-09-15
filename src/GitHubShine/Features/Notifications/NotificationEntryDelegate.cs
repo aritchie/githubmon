@@ -12,6 +12,10 @@ namespace GitHubShine.Notifications;
 /// <see cref="MainWindowLauncher.ShowOrCreate"/> is what rejoins the Dock, recreates the window if
 /// the user closed it, and pulls the process to the front.
 ///
+/// The backstop is GitHubShine.Platforms.MacOS.SingleInstance: if macOS relaunches the app for a
+/// tap anyway (LaunchServices resolving the bundle id to another registered build), that second
+/// process hands off to this one and exits.
+///
 /// Deliberately no per-notification routing: the events that raise alerts span builds, inbox, PRs,
 /// issues, stars and forks (see NotificationDispatchHandler) and there is no per-event
 /// destination to navigate to yet.

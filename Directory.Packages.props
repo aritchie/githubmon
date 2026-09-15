@@ -1,10 +1,10 @@
 <Project>
     <PropertyGroup>
         <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
-        <ShinyVersion>5.5.0</ShinyVersion>
+        <ShinyVersion>5.6.3</ShinyVersion>
         <MauiLabsVersion>0.1.0-preview.12.26421.1</MauiLabsVersion>
-        <ControlsVersion>1.3.0-beta-0004</ControlsVersion>
-        <MauiVersion>10.0.100</MauiVersion>
+        <ControlsVersion>1.4.0-beta-0011</ControlsVersion>
+        <MauiVersion>10.0.101</MauiVersion>
         <!-- Shiny.Extensions.* travel together: MauiHosting depends on DependencyInjection at its
              own exact version, so a lower pin on the direct reference is an NU1605 downgrade. -->
         <ShinyExtensionsVersion>5.2.1</ShinyExtensionsVersion>
@@ -12,14 +12,14 @@
     <ItemGroup>
         <PackageVersion Include="Microsoft.Maui.Controls" Version="$(MauiVersion)"/>
         <PackageVersion Include="Microsoft.AspNetCore.Components.WebView.Maui" Version="$(MauiVersion)"/>
-        <PackageVersion Include="Microsoft.Extensions.Logging.Debug" Version="10.0.11"/>
-        <PackageVersion Include="Microsoft.Extensions.Logging.Console" Version="10.0.11"/>
+        <PackageVersion Include="Microsoft.Extensions.Logging.Debug" Version="10.0.12"/>
+        <PackageVersion Include="Microsoft.Extensions.Logging.Console" Version="10.0.12"/>
         <PackageVersion Include="Shiny.Hosting.Maui" Version="$(ShinyVersion)"/>
         <PackageVersion Include="Shiny.Notifications" Version="$(ShinyVersion)"/>
         <PackageVersion Include="Shiny.Notifications.Linux" Version="$(ShinyVersion)"/>
         <PackageVersion Include="Shiny.Jobs" Version="$(ShinyVersion)"/>
         <PackageVersion Include="Shiny.Core.Linux" Version="$(ShinyVersion)"/>
-        <PackageVersion Include="Shiny.DocumentDb.Sqlite" Version="13.4.0"/>
+        <PackageVersion Include="Shiny.DocumentDb.Sqlite" Version="13.5.0"/>
         <PackageVersion Include="Shiny.Extensions.Stores" Version="$(ShinyExtensionsVersion)"/>
         <PackageVersion Include="Shiny.Extensions.DependencyInjection" Version="$(ShinyExtensionsVersion)"/>
         <!-- IStartupService (launch at login) for the desktop heads. Ships a net10.0-macos asset,
