@@ -4,7 +4,7 @@
 #
 # Authenticates with an App Store Connect API key, which is read from the environment so the
 # .p8 never appears in a process listing:
-#   AC_API_KEY_P8_B64  base64 of the AuthKey_XXXXXXXXXX.p8 file
+#   AC_API_KEY_P8      the AuthKey_XXXXXXXXXX.p8 file, as its PEM text or base64-encoded
 #   AC_API_KEY_ID      the Key ID   (10 chars, e.g. ABCD123456)
 #   AC_API_ISSUER_ID   the Issuer ID (a UUID)
 #
@@ -14,14 +14,18 @@ set -euo pipefail
 ARTIFACT="${1:?usage: notarize.sh <artifact>}"
 [[ -f "$ARTIFACT" ]] || { echo "error: no such artifact: $ARTIFACT" >&2; exit 1; }
 
-: "${AC_API_KEY_P8_B64:?AC_API_KEY_P8_B64 is not set}"
+: "${AC_API_KEY_P8:?AC_API_KEY_P8 is not set}"
 : "${AC_API_KEY_ID:?AC_API_KEY_ID is not set}"
 : "${AC_API_ISSUER_ID:?AC_API_ISSUER_ID is not set}"
 
 KEYDIR="$(mktemp -d)"
 trap 'rm -rf "$KEYDIR"' EXIT
 KEYFILE="$KEYDIR/AuthKey.p8"
-printf '%s' "$AC_API_KEY_P8_B64" | base64 --decode > "$KEYFILE"
+if [[ "$AC_API_KEY_P8" == *"BEGIN PRIVATE KEY"* ]]; then
+    printf '%s\n' "$AC_API_KEY_P8" > "$KEYFILE"
+else
+    printf '%s' "$AC_API_KEY_P8" | base64 --decode > "$KEYFILE"
+fi
 chmod 600 "$KEYFILE"
 
 echo "==> Submitting $(basename "$ARTIFACT") to the notary service (this takes a few minutes) ..."
