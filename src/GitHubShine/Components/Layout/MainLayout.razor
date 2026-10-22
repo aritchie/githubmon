@@ -2,6 +2,7 @@
 @implements IDisposable
 @inject AppPlatformInfo Platform
 @inject NavigationManager Nav
+@inject IUpdateService Updates
 
 <main class="@(Platform.IsMobile ? "has-tabbar" : null)">
     @* Nav lives in Items (not EndContent) so ShinyToolbar's auto-overflow kicks in:
@@ -81,12 +82,30 @@
     {
         BuildNav();
         Nav.LocationChanged += OnLocationChanged;
+        Updates.Changed += OnUpdatesChanged;
+        _ = InvokeAsync(PromptForUpdateAsync);
     }
 
     void OnLocationChanged(object? sender, LocationChangedEventArgs e)
     {
         BuildNav();
         StateHasChanged();
+        _ = InvokeAsync(PromptForUpdateAsync);
+    }
+
+    void OnUpdatesChanged(object? sender, EventArgs e) => _ = InvokeAsync(PromptForUpdateAsync);
+
+    // The startup "update available" prompt. The check finishes a few seconds after launch, which
+    // is usually while the dashboard is up — but it only takes over from the dashboard: someone
+    // already halfway through adding an account shouldn't be yanked away, so elsewhere it waits
+    // until they next land there. The service hands the prompt out once per session.
+    async Task PromptForUpdateAsync()
+    {
+        if (Nav.ToBaseRelativePath(Nav.Uri).Split('?', '#')[0].Trim('/').Length != 0)
+            return;
+
+        if (await Updates.TryClaimStartupPromptAsync())
+            Nav.NavigateTo("/update");
     }
 
     // Rebuilt on every navigation so the active link can be tinted. ToolbarItem
@@ -143,5 +162,9 @@
         IconColor = e.Active ? "var(--link)" : null
     };
 
-    public void Dispose() => Nav.LocationChanged -= OnLocationChanged;
+    public void Dispose()
+    {
+        Nav.LocationChanged -= OnLocationChanged;
+        Updates.Changed -= OnUpdatesChanged;
+    }
 }

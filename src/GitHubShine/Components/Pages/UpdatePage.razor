@@ -1,0 +1,135 @@
+@page "/update"
+@implements IDisposable
+@inject IUpdateService Updates
+@inject IToastService Toast
+@inject IBrowser Browser
+@inject NavigationManager Nav
+
+<div class="page narrow">
+    @if (Updates.Available is { } update)
+    {
+        <div class="page-header">
+            <div>
+                <h1>Update available</h1>
+                <span class="subtitle">
+                    GitHub Shine @update.Version is ready — you have @Updates.CurrentVersion.
+                </span>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="update-meta">
+                <div>
+                    <div class="update-title">
+                        @update.Title
+                        @if (update.IsPrerelease)
+                        {
+                            <Pill Text="Pre-release" Type="PillType.Warning" />
+                        }
+                    </div>
+                    <div class="hint">
+                        @update.Tag
+                        @if (update.PublishedAt is { } published)
+                        {
+                            <text> · released @published.LocalDateTime.ToString("d MMM yyyy")</text>
+                        }
+                        @if (update.PackageSize is { } size && Updates.CanInstallInPlace)
+                        {
+                            <text> · @FormatSize(size) download</text>
+                        }
+                    </div>
+                </div>
+                <button class="btn" @onclick="OpenReleasePageAsync">Release page ↗</button>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>What's new</h2>
+            @if (update.NotesHtml is { } notes)
+            {
+                @* Rendered and sanitised by the release host; links are rerouted to the system
+                   browser by the click hook in index.html. *@
+                <div class="release-notes">@((MarkupString)notes)</div>
+            }
+            else
+            {
+                <p class="hint" style="margin:0;">This release has no notes.</p>
+            }
+        </div>
+
+        <div class="actions-bar">
+            <label class="check">
+                <input type="checkbox" checked="@skipped" @onchange="OnSkipChangedAsync" disabled="@Updates.IsInstalling" />
+                Don't show again
+            </label>
+            <span class="status">
+                @if (Updates.IsInstalling)
+                {
+                    <span class="spinner"></span>
+                    @Updates.InstallStatus
+                }
+            </span>
+            <button class="btn" @onclick="NotNow" disabled="@Updates.IsInstalling">Not now</button>
+            <button class="btn primary" @onclick="InstallAsync" disabled="@Updates.IsInstalling">
+                @(Updates.CanInstallInPlace ? "Install" : "Download")
+            </button>
+        </div>
+    }
+    else
+    {
+        <div class="card empty-state">
+            <h2>You're up to date</h2>
+            <p>GitHub Shine @Updates.CurrentVersion is the newest version.</p>
+            <a class="btn" href="/settings">Back to settings</a>
+        </div>
+    }
+</div>
+
+@code {
+    bool skipped;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Updates.Changed += OnUpdatesChanged;
+        if (Updates.Available is { } update)
+            skipped = await Updates.IsSkippedAsync(update);
+    }
+
+    // Saved as soon as it's ticked rather than on "Not now", so closing the window or navigating
+    // away counts too.
+    async Task OnSkipChangedAsync(ChangeEventArgs e)
+    {
+        if (Updates.Available is not { } update)
+            return;
+        skipped = (bool)e.Value!;
+        await Updates.SetSkippedAsync(update, skipped);
+    }
+
+    void NotNow() => Nav.NavigateTo("/");
+
+    async Task InstallAsync()
+    {
+        var result = await Updates.InstallAsync();
+        switch (result.Outcome)
+        {
+            case UpdateInstallOutcome.HandedOff:
+                await Toast.InfoAsync(result.Message!);
+                break;
+            case UpdateInstallOutcome.Failed:
+                await Toast.DangerAsync($"Update failed: {result.Message}");
+                break;
+        }
+    }
+
+    Task OpenReleasePageAsync()
+        => Updates.Available is { } update
+            ? Browser.OpenAsync(update.PageUrl, BrowserLaunchMode.External)
+            : Task.CompletedTask;
+
+    static string FormatSize(long bytes)
+        => bytes >= 1024 * 1024 ? $"{bytes / (1024.0 * 1024):0.#} MB" : $"{bytes / 1024.0:0} KB";
+
+    void OnUpdatesChanged(object? sender, EventArgs e) => _ = InvokeAsync(StateHasChanged);
+
+    public void Dispose() => Updates.Changed -= OnUpdatesChanged;
+}

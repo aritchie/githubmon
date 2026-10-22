@@ -14,5 +14,15 @@
         <div class="boot-splash">Loading GitHub Shine…</div>
     </div>
     <script src="_framework/blazor.webview.js" autostart="false"></script>
+    <script>
+        // Release notes are HTML from the release host; their links would navigate the WebView
+        // away from the app. Send them to the system browser instead (ExternalLinks.cs).
+        document.addEventListener('click', function (e) {
+            var a = e.target.closest && e.target.closest('.release-notes a[href]');
+            if (!a) return;
+            e.preventDefault();
+            DotNet.invokeMethodAsync('GitHubShine', 'OpenExternalLink', a.href);
+        });
+    </script>
 </body>
 </html>

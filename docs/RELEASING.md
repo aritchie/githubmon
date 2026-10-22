@@ -11,6 +11,25 @@ Only the macOS head is released. `TargetFrameworks` in `GitHubShine.csproj` is c
 build OS, so adding Windows or Linux later means a separate job on a Windows / Ubuntu runner (the
 earlier multi-platform version of this workflow is in git history).
 
+### The app updates itself from these releases
+
+On startup the desktop app reads this repository's releases (anonymously, `Features/Updates/ReleaseFeed.cs`),
+takes the highest-versioned non-draft one — **prereleases included** — and offers it if it's newer
+than the running `ApplicationDisplayVersion`. On macOS, Install downloads the `.dmg`, checks it
+against `SHA256SUMS.txt`, verifies the app inside is validly signed by the same Developer ID team,
+swaps it over the running bundle and relaunches. Windows/Linux just open the release page.
+
+That makes the asset names part of a contract with every installed copy:
+
+- exactly one asset ending in **`.dmg`**, containing a single `*.app` at its root;
+- **`SHA256SUMS.txt`** in `shasum -a 256` format, listing that DMG by file name;
+- the app signed with the **same Team ID** as previous releases — a change of signing team makes
+  every existing install refuse the update (deliberately), and users must reinstall by hand.
+
+Tag versions are compared numerically after the `-suffix` is stripped, matching how the app is
+stamped, so `v1.2.0-beta2` is not offered to someone on `v1.2.0-beta1` (both report 1.2.0) —
+bump the patch number between prereleases you want installed copies to pick up.
+
 ---
 
 ## Cutting a release

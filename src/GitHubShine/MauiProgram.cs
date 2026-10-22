@@ -147,6 +147,7 @@ public static class MauiProgram
                 .Document<ClonePrefs>(cfg => cfg.Table = cfg.TypeName)
                 .Document<PollState>(cfg => cfg.Table = cfg.TypeName)
                 .Document<FollowedPerson>(cfg => cfg.Table = cfg.TypeName)
+                .Document<UpdatePrefs>(cfg => cfg.Table = cfg.TypeName)
             );
         });
 
@@ -228,6 +229,17 @@ public static class MauiProgram
         builder.Services.AddSingletonAsImplementedInterfaces<PollStartupService>();
         builder.Services.AddSingletonAsImplementedInterfaces<NotificationAccessInitializer>();
         builder.Services.AddSingletonAsImplementedInterfaces<NotificationPrefsInitializer>();
+
+        // App updates from this project's own releases. Only macOS has a package to install in
+        // place (the release workflow publishes a DMG and nothing else); every other head sends the
+        // user to the release page. Mobile never offers it — see UpdateService.IsSupported.
+        builder.Services.AddSingleton<BrowserUpdateInstaller>();
+#if MACOS
+        builder.Services.AddSingleton<IUpdateInstaller, GitHubShine.Platforms.MacOS.MacUpdateInstaller>();
+#else
+        builder.Services.AddSingleton<IUpdateInstaller>(sp => sp.GetRequiredService<BrowserUpdateInstaller>());
+#endif
+        builder.Services.AddSingletonAsImplementedInterfaces<UpdateStartupService>();
 
 #if MACOS
         builder.Services.AddSingleton<IFileDialogs, GitHubShine.Platforms.MacOS.MacFileDialogs>();

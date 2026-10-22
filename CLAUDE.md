@@ -109,6 +109,9 @@ Things about it that are load-bearing and easy to break:
 - It uses `dotnet build` and takes the TFM-root bundle, per Gotcha 3, and asserts a minimum
   `Contents/Resources` file count, so if a future SDK regresses static-web-asset copying the job
   fails instead of shipping an app with a blank WebView.
+- Installed copies **update themselves from these releases** (`Features/Updates/`), so the asset
+  names — one `*.dmg` plus `SHA256SUMS.txt` — and the signing Team ID are a contract with every
+  shipped build. See "The app updates itself" in `docs/RELEASING.md` before changing them.
 
 Helper scripts in `eng/ci/` (`sign-macos-app.sh`, `make-dmg.sh`, `notarize.sh`, `make-ipa.sh`)
 are standalone — run the whole macOS signing path locally without CI. `eng/package-macos.sh`

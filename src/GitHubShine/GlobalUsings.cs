@@ -14,6 +14,7 @@ global using GitHubShine.Persons.Mediator;
 global using GitHubShine.Providers;
 global using GitHubShine.Settings;
 global using GitHubShine.Sync;
+global using GitHubShine.Updates;
 #if !MOBILE
 global using GitHubShine.Tray;
 #endif

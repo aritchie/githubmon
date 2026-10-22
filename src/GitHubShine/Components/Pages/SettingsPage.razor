@@ -9,6 +9,7 @@
 @inject IStartupSettings Startup
 @inject ISyncStore SyncStore
 @inject AppPlatformInfo Platform
+@inject IUpdateService Updates
 @using Shiny
 @using Shiny.Notifications
 
@@ -16,7 +17,7 @@
     <div class="page-header">
         <div>
             <h1>Settings</h1>
-            <span class="subtitle">Notifications, alert categories, refresh interval, startup, and backups.</span>
+            <span class="subtitle">Notifications, alert categories, refresh interval, startup, updates, and backups.</span>
         </div>
     </div>
 
@@ -233,6 +234,38 @@
         </div>
     }
 
+    @* Mobile updates come from the app stores, so there is nothing to offer there. *@
+    @if (Updates.IsSupported)
+    {
+        <div class="card">
+            <h2>Updates</h2>
+            <div class="setting-row">
+                <div class="setting-label">
+                    <div><strong>@UpdateHeadline</strong></div>
+                    <div class="hint">@UpdateHint</div>
+                </div>
+                <div class="pills">
+                    @if (Updates.IsInstalling)
+                    {
+                        <span class="spinner"></span>
+                    }
+                    else if (Updates.Available is not null)
+                    {
+                        <Pill Text="Update available" Type="PillType.Info" />
+                        <a class="btn" href="/update">Release notes</a>
+                        <button class="btn primary" @onclick="InstallUpdateAsync">
+                            @(Updates.CanInstallInPlace ? "Install" : "Download")
+                        </button>
+                    }
+                    else
+                    {
+                        <button class="btn" @onclick="CheckForUpdatesAsync" disabled="@(Updates.State == UpdateCheckState.Checking)">Check now</button>
+                    }
+                </div>
+            </div>
+        </div>
+    }
+
     <div class="card">
         <h2>Backup &amp; Restore</h2>
         <p class="hint" style="margin-top:0;">
@@ -334,12 +367,64 @@
             "Launch GitHub Shine when you log in, so monitoring picks up without you opening it."
     };
 
+    string UpdateHeadline => Updates.Available is { } update
+        ? $"Version {update.Version} is available"
+        : $"Version {Updates.CurrentVersion}";
+
+    string UpdateHint
+    {
+        get
+        {
+            if (Updates.IsInstalling)
+                return Updates.InstallStatus ?? "Installing…";
+            if (Updates.Available is not null)
+                return $"You have {Updates.CurrentVersion}. "
+                    + (Updates.CanInstallInPlace
+                        ? "Installing replaces the app and restarts it — your accounts and settings are kept."
+                        : "Download opens the release page in your browser.");
+            return Updates.State switch
+            {
+                UpdateCheckState.Checking => "Checking for a newer version…",
+                UpdateCheckState.Failed => $"Couldn't check for updates: {Updates.Error}",
+                UpdateCheckState.UpToDate when Updates.LastCheckedUtc is { } checkedAt => $"You're on the newest version. Checked {Ago(checkedAt)}.",
+                _ => "GitHub Shine checks for a newer version each time it starts."
+            };
+        }
+    }
+
+    async Task CheckForUpdatesAsync()
+    {
+        await Updates.CheckAsync(force: true);
+        if (Updates.State == UpdateCheckState.UpToDate)
+            await Toast.SuccessAsync("You're on the newest version");
+    }
+
+    async Task InstallUpdateAsync()
+    {
+        var result = await Updates.InstallAsync();
+        switch (result.Outcome)
+        {
+            case UpdateInstallOutcome.HandedOff:
+                await Toast.InfoAsync(result.Message!);
+                break;
+            case UpdateInstallOutcome.Failed:
+                await Toast.DangerAsync($"Update failed: {result.Message}");
+                break;
+        }
+    }
+
+    void OnUpdatesChanged(object? sender, EventArgs e) => _ = InvokeAsync(StateHasChanged);
+
     protected override async Task OnInitializedAsync()
     {
         Config.PreferencesChanged += OnPreferencesChanged;
         // The tray menu can mute from outside this page — keep the switch honest.
         NotifyPrefs.Changed += OnPreferencesChanged;
+        Updates.Changed += OnUpdatesChanged;
         await LoadAsync();
+        // Reuses a recent result, so this only reaches the network for an app that has been
+        // open a while — long enough for a release to have landed since the startup check.
+        _ = Updates.CheckAsync();
     }
 
     async Task RequestAccessAsync()
@@ -596,5 +681,6 @@
     {
         Config.PreferencesChanged -= OnPreferencesChanged;
         NotifyPrefs.Changed -= OnPreferencesChanged;
+        Updates.Changed -= OnUpdatesChanged;
     }
 }
