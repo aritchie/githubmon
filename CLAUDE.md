@@ -99,19 +99,33 @@ LaunchServices icon cache is stale from repeated redeploys — fix with `lsregis
 ---
 
 ## Releasing
-`.github/workflows/release.yml` fires on a `v*` tag and publishes a GitHub release with a
-notarized, stapled universal macOS DMG (macOS only). Full runbook and the list of required
-secrets: **`docs/RELEASING.md`**.
+`.github/workflows/release.yml` fires on a `v*` tag and publishes one GitHub release with a
+notarized, stapled universal macOS DMG, Windows x64/arm64 Inno Setup installers
+(`GitHubShine-<v>-windows-<arch>-setup.exe`), Linux x64/arm64 `.deb` + `.rpm`
+(`GitHubShine-<v>-linux-<arch>.{deb,rpm}`) and `SHA256SUMS.txt` over all of them. Each head
+builds in its own job on its own OS (TFMs are build-OS conditioned); a final job checksums and
+publishes. Full runbook and the list of required secrets: **`docs/RELEASING.md`**.
 
 Things about it that are load-bearing and easy to break:
-- It runs on the `xcode-27` runner and pins **Xcode 27.1** — the macOS workload's SDK refuses
-  any other Xcode. Bump that path when the workload moves.
-- It uses `dotnet build` and takes the TFM-root bundle, per Gotcha 3, and asserts a minimum
+- The macOS job runs on the `xcode-27` runner and pins **Xcode 27.1** — the macOS workload's SDK
+  refuses any other Xcode. Bump that path when the workload moves.
+- macOS uses `dotnet build` and takes the TFM-root bundle, per Gotcha 3, and asserts a minimum
   `Contents/Resources` file count, so if a future SDK regresses static-web-asset copying the job
-  fails instead of shipping an app with a blank WebView.
+  fails instead of shipping an app with a blank WebView. Windows/Linux use `dotnet publish`
+  (the trap is the macOS bundle's) and assert on the `wwwroot/` file count instead.
 - Installed copies **update themselves from these releases** (`Features/Updates/`), so the asset
-  names — one `*.dmg` plus `SHA256SUMS.txt` — and the signing Team ID are a contract with every
-  shipped build. See "The app updates itself" in `docs/RELEASING.md` before changing them.
+  names — exactly one `*.dmg` plus `SHA256SUMS.txt` (`<hex>  <name>` lines; extra lines for the
+  other assets are fine) — and the signing Team ID are a contract with every shipped build. See
+  "The app updates itself" in `docs/RELEASING.md` before changing them. Never upload anything
+  else ending in `.dmg`.
+- The Linux job passes `-p:Version=<tag>`: the GTK head's `AppInfo.VersionString` reads the
+  assembly attributes and nothing maps `ApplicationDisplayVersion` onto them (WinUI.targets does
+  that on Windows), so without it the app reports 1.0.0.
+- The Linux job installs the `maui-android` workload only because `UseMaui=true` needs
+  `Microsoft.Maui.Sdk.net10`, and that's the workload that carries it and installs on Linux.
+- Installers live in `eng/installers/` (`windows/GitHubShine.iss`, `linux/nfpm.yaml` + `.desktop`).
+  The Inno `AppId` GUID must never change, and its uninstall cleans the HKCU Run value named
+  `GitHubShine` — the `StartupServiceOptions.Identifier` in `MauiProgram.cs`; keep them in step.
 
 Helper scripts in `eng/ci/` (`sign-macos-app.sh`, `make-dmg.sh`, `notarize.sh`, `make-ipa.sh`)
 are standalone — run the whole macOS signing path locally without CI. `eng/package-macos.sh`

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=GitHub Shine
+GenericName=Repository Dashboard
+Comment=Stars, issues, pull requests and CI status for the repositories you care about
+Exec=/usr/bin/githubshine
+Icon=net.shiny.githubshine
+Terminal=false
+Categories=Development;RevisionControl;
+Keywords=github;gitea;forgejo;git;repository;pull request;
+StartupWMClass=net.shiny.githubshine

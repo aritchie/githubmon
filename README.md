@@ -154,10 +154,10 @@ Grab a build from the [latest release](https://github.com/aritchie/githubmon/rel
 | Platform | Asset | Notes |
 |---|---|---|
 | macOS 15+ | `*-osx-universal.dmg` | Signed and notarized by Apple. Open the DMG and drag the app to Applications. Universal (Intel + Apple silicon). |
-| Windows 10 1809+ | `*-win-x64.zip` | Unpack and run `GitHubShine.exe`. Self-contained, so no .NET install is needed. |
-| Linux x64 | `*-linux-x64.tar.gz` | Unpack and run `./GitHubShine`. Requires GTK4 + WebKitGTK 6.0 on the host. |
-| Android 7+ | `*-android.apk` | Sideload. The `.aab` is the Play Store upload bundle and can't be installed on a device. |
-| iOS 15+ | `*-ios-unsigned.ipa` | Unsigned. You have to re-sign it with your own Apple account using a sideloading tool. |
+| Windows 10 1809+ | `*-windows-x64-setup.exe` / `*-windows-arm64-setup.exe` | Per-user installer, no admin rights needed. Self-contained, so no .NET install is needed. Unsigned, so SmartScreen warns on first run. |
+| Linux x64 / arm64 | `*-linux-<arch>.deb` / `*-linux-<arch>.rpm` | `sudo apt install ./GitHubShine-*.deb` or `sudo dnf install ./GitHubShine-*.rpm` pulls in GTK4, WebKitGTK 6.0 and the tray libraries. |
+
+Android and iOS builds are not published. Verify downloads against `SHA256SUMS.txt`.
 
 Releases are cut by tagging; see [docs/RELEASING.md](docs/RELEASING.md).
 

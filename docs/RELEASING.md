@@ -1,15 +1,20 @@
 # Releasing GitHub Shine
 
-`.github/workflows/release.yml` builds the macOS app and publishes a GitHub release with:
+`.github/workflows/release.yml` builds the desktop heads and publishes a GitHub release with:
 
-| Asset | Signing |
-|---|---|
-| `GitHubShine-<v>-osx-universal.dmg` | **Developer ID + hardened runtime + notarized + stapled** |
-| `SHA256SUMS.txt` | — |
+| Asset | Built on | Signing |
+|---|---|---|
+| `GitHubShine-<v>-osx-universal.dmg` | `xcode-27` | **Developer ID + hardened runtime + notarized + stapled** |
+| `GitHubShine-<v>-windows-x64-setup.exe` | `windows-latest` | unsigned (Inno Setup, per-user) |
+| `GitHubShine-<v>-windows-arm64-setup.exe` | `windows-latest` | unsigned (Inno Setup, per-user) |
+| `GitHubShine-<v>-linux-x64.deb` / `.rpm` | `ubuntu-24.04` | unsigned (nfpm) |
+| `GitHubShine-<v>-linux-arm64.deb` / `.rpm` | `ubuntu-24.04` | unsigned (nfpm) |
+| `SHA256SUMS.txt` | — | covers every asset above |
 
-Only the macOS head is released. `TargetFrameworks` in `GitHubShine.csproj` is conditioned on the
-build OS, so adding Windows or Linux later means a separate job on a Windows / Ubuntu runner (the
-earlier multi-platform version of this workflow is in git history).
+`TargetFrameworks` in `GitHubShine.csproj` is conditioned on the build OS, so each head builds in
+its own job (`macos`, `windows`, `linux`) and uploads an artifact; a final `release` job
+checksums the lot and creates the release. If any head fails, nothing is published. Android and
+iOS are not released (an earlier version of this workflow built them; it is in git history).
 
 ### The app updates itself from these releases
 
@@ -21,8 +26,11 @@ swaps it over the running bundle and relaunches. Windows/Linux just open the rel
 
 That makes the asset names part of a contract with every installed copy:
 
-- exactly one asset ending in **`.dmg`**, containing a single `*.app` at its root;
-- **`SHA256SUMS.txt`** in `shasum -a 256` format, listing that DMG by file name;
+- exactly one asset ending in **`.dmg`**, containing a single `*.app` at its root — the updater
+  takes the first `.dmg` it finds, and the `release` job fails if there isn't exactly one;
+- **`SHA256SUMS.txt`** in `shasum -a 256` format (`<hex>  <name>` per line — `sha256sum`, which
+  the workflow uses, writes the same thing), listing that DMG by file name. The updater looks up
+  the DMG's line by exact name and ignores the others, so the Windows/Linux lines are harmless;
 - the app signed with the **same Team ID** as previous releases — a change of signing team makes
   every existing install refuse the update (deliberately), and users must reinstall by hand.
 
@@ -51,6 +59,8 @@ always increases.
 
 ## Runner and toolchain
 
+### macOS
+
 The job runs on the `xcode-27` runner, pins **Xcode 27.1** and installs the `macos` + `maui`
 workloads from SDK `10.0.4xx` — the same combination ShinyNotch releases with. The workload's
 macOS SDK (27.0.10742) refuses any other Xcode, including the runner's default 27.0 and its 27.2
@@ -59,11 +69,39 @@ beta. When the workload moves to a new macOS SDK, bump the Xcode path in the **X
 `maui` is installed (not just `macos`) because restore evaluates every Apple-host TFM in the
 csproj — `net10.0-ios` and `net10.0-android` too — even for a `-f net10.0-macos` build.
 
+### Windows
+
+`windows-latest` with the `maui-windows` workload. `dotnet publish` (the static-web-asset trap is
+specific to the macOS bundle; the job still asserts on the `wwwroot/` file count) self-contained
+with `WindowsAppSDKSelfContained=true`, once per `win-x64` / `win-arm64`, then Inno Setup
+(`eng/installers/windows/GitHubShine.iss`) wraps each into a setup exe. Both architectures
+build on the x64 runner — `LibGit2Sharp.NativeBinaries` ships `win-arm64` natives.
+
+### Linux
+
+`ubuntu-24.04` with the `maui-android` workload — not because anything Android is built, but
+because `UseMaui=true` makes the SDK import `Microsoft.Maui.Sdk.net10` even for the plain
+`net10.0` GTK head, and `maui-android` is the workload that carries it and installs on Linux.
+`dotnet publish -f net10.0` self-contained once per `linux-x64` / `linux-arm64` (managed code
+over system GTK; libgit2 and e_sqlite3 ship natives for both), then [nfpm](https://nfpm.goreleaser.com)
+(pinned by `NFPM_VERSION`, checksum-verified) turns each into a `.deb` and an `.rpm` from
+`eng/installers/linux/nfpm.yaml`.
+
+### Version stamping
+
+The update check compares releases against `AppInfo.VersionString`. macOS reads it from
+`CFBundleShortVersionString` and Windows from the assembly, which `Microsoft.Maui.Core`'s
+`WinUI.targets` stamps from `ApplicationDisplayVersion` — so both just take
+`ApplicationDisplayVersion`. The labs GTK head also reads the assembly attributes, but nothing maps
+`ApplicationDisplayVersion` onto them there, so the Linux job passes `-p:Version=<tag version>`
+too. Without it every Linux build reports 1.0.0 and the update check always thinks it is out of date.
+
 ---
 
 ## Required secrets
 
-Same names as ShinyNotch, so the same values can be reused.
+All for the macOS job — the Windows and Linux builds are unsigned and need none. Same names as
+ShinyNotch, so the same values can be reused.
 
 | Secret | What it is |
 |---|---|
@@ -96,7 +134,7 @@ gh secret set APPLE_MY_IDENTITY_ISSUER_ID
 
 ---
 
-## What the job does, and why
+## What the macOS job does, and why
 
 `dotnet build`, **not** `dotnet publish` — publish strips the Blazor static web assets out of
 `Contents/Resources` and the WebView renders blank. The job then takes the `.app` at the **TFM
@@ -138,3 +176,47 @@ eng/ci/notarize.sh artifacts/GitHubShine.dmg
 
 `eng/package-macos.sh` remains the fast ad-hoc-signed loop for local testing; it is not part of
 the release path.
+
+---
+
+## The Windows installer
+
+Per-user (`PrivilegesRequired=lowest`) into `%LOCALAPPDATA%\Programs\GitHub Shine`, so it needs
+no admin rights and the exe path that "Start with the computer" writes into the HKCU Run key
+stays put across upgrades. **Never change the `AppId` GUID** in the `.iss` — it is how an upgrade
+finds the copy it replaces.
+
+Uninstall kills the running tray app, then removes the `GitHubShine` value from
+`HKCU\…\CurrentVersion\Run` (and `…\Explorer\StartupApproved\Run`) — the value name is
+`StartupServiceOptions.Identifier` in `MauiProgram.cs`, so the two have to change together (they
+shouldn't change at all: existing autostart entries would be orphaned). The data folder,
+`%LOCALAPPDATA%\GitHubShine`, is left alone.
+
+The exe is unsigned, so SmartScreen warns on first run; fixing that needs an EV or Azure Trusted
+Signing certificate. WebView2 is not bundled — Windows 11 and current Windows 10 ship it.
+
+## The Linux packages
+
+Installed to `/opt/githubshine`, with `/usr/bin/githubshine`, a `.desktop` file and the
+scalable icon named after `ApplicationId` (`net.shiny.githubshine`, which the GTK backend uses as
+its GApplication id). `nfpm.yaml` lists every runtime dependency with the reason for it — they
+are the system libraries the managed code loads by soname: GTK4 + WebKitGTK 6 (UI and
+BlazorWebView), GTK3 + ayatana-appindicator + libnotify + libX11 (the tray, from
+`Shiny.Maui.Controls.Desktop`), OpenSSL, ICU, `ca-certificates` and `xdg-utils`. Notifications
+go over D-Bus and need no library; libsecret isn't needed because tokens live in SQLite.
+
+Removing the package can't touch `~/.config/autostart/GitHubShine.desktop` (it's per-user); it
+just points at a binary that is gone, which desktop sessions skip.
+
+### Rehearsing the Linux packaging on a Mac
+
+The csproj only offers `net10.0` on a Linux host, but global properties override that, so the
+Linux publish cross-builds from macOS:
+
+```bash
+dotnet publish src/GitHubShine/GitHubShine.csproj -c Release \
+  -p:TargetFrameworks=net10.0 -p:TargetFramework=net10.0 -p:_IsLinux=true \
+  -r linux-x64 --self-contained -p:Version=1.2.3 -o publish/linux-x64
+VERSION=1.2.3 ARCH=amd64 PUBLISH_DIR=publish/linux-x64 envsubst < eng/installers/linux/nfpm.yaml > /tmp/nfpm.yaml
+nfpm package -f /tmp/nfpm.yaml -p deb -t artifacts/
+```

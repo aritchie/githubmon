@@ -1,0 +1,81 @@
+# The .deb and .rpm for the GTK4 head. Run from the repository root after publishing, with
+# envsubst filling in VERSION, ARCH (amd64 or arm64) and PUBLISH_DIR - see the release workflow.
+#
+# The app is self-contained, so .NET itself, libgit2 (LibGit2Sharp.NativeBinaries) and SQLite
+# (e_sqlite3) are all in PUBLISH_DIR. What the package depends on is what it cannot carry - the
+# system libraries the managed code loads by soname at run time:
+#   GTK4 + WebKitGTK 6    the maui-labs GTK4 backend and its BlazorWebView (GirCore Gtk-4.0 / WebKit-6.0)
+#   GTK3 + ayatana        the tray icon (Shiny.Maui.Controls.Desktop P/Invokes libayatana-appindicator3,
+#                         which is GTK3-only, plus libnotify and libX11)
+#   OpenSSL               .NET's HTTPS to the GitHub/Gitea APIs, and libgit2, which dlopens it for https remotes
+#   ICU                   .NET globalization (the app is not built invariant)
+#   xdg-utils             links open in the browser via xdg-open
+# Notifications go over D-Bus (org.freedesktop.Notifications, managed Tmds.DBus) and launch at login
+# writes ~/.config/autostart, so neither needs a library. libsecret is deliberately absent: tokens
+# live in the SQLite store, not SecureStorage (Features/Accounts/SecureTokenVault.cs).
+name: githubshine
+version: ${VERSION}
+arch: ${ARCH}
+platform: linux
+section: devel
+priority: optional
+maintainer: Allan Ritchie <allan.ritchie@gmail.com>
+vendor: Allan Ritchie
+homepage: https://github.com/aritchie/githubmon
+license: Proprietary
+description: |
+  A dashboard for the repositories you care about on GitHub, GitHub Enterprise and
+  Gitea / Forgejo - stars, issues, pull requests and CI status, with notifications.
+  Runs from the system tray.
+
+contents:
+  - src: ${PUBLISH_DIR}
+    dst: /opt/githubshine
+    type: tree
+
+  # "Start with the computer" records Environment.ProcessPath, which resolves this symlink to
+  # /opt/githubshine/GitHubShine - so that path is part of the contract with existing autostart entries.
+  - src: /opt/githubshine/GitHubShine
+    dst: /usr/bin/githubshine
+    type: symlink
+
+  # Named after ApplicationId, which the GTK backend uses as the GApplication id - the desktop
+  # shell matches the running window to this file (and its icon) by that name.
+  - src: eng/installers/linux/net.shiny.githubshine.desktop
+    dst: /usr/share/applications/net.shiny.githubshine.desktop
+
+  - src: src/GitHubShine/Resources/AppIcon/appicon.svg
+    dst: /usr/share/icons/hicolor/scalable/apps/net.shiny.githubshine.svg
+
+scripts:
+  postinstall: eng/installers/linux/after-change.sh
+  postremove: eng/installers/linux/after-change.sh
+
+overrides:
+  deb:
+    # Alternatives cover the t64 renames (Ubuntu 24.04+) and each ICU a supported release ships.
+    depends:
+      - libgtk-4-1
+      - libwebkitgtk-6.0-4
+      - libgtk-3-0t64 | libgtk-3-0
+      - libayatana-appindicator3-1
+      - libnotify4
+      - libx11-6
+      - libssl3t64 | libssl3
+      - libicu78 | libicu77 | libicu76 | libicu74 | libicu72
+      - libstdc++6
+      - ca-certificates
+      - xdg-utils
+  rpm:
+    depends:
+      - gtk4
+      - webkitgtk6.0
+      - gtk3
+      - libayatana-appindicator-gtk3
+      - libnotify
+      - libX11
+      - openssl-libs
+      - libicu
+      - libstdc++
+      - ca-certificates
+      - xdg-utils
