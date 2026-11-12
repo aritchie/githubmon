@@ -36,6 +36,9 @@ env:
   DOTNET_NOLOGO: 'true'
   DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
   DOTNET_VERSION: 10.0.4xx
+  # Workload set pinned so a release builds against the same platform SDKs every time, rather than whatever
+  # workload set landed most recently. Must be in DOTNET_VERSION's feature band. Bump deliberately.
+  WORKLOAD_VERSION: 10.0.404
   PROJECT: src/GitHubShine/GitHubShine.csproj
   # Only the TFM-root bundle is the finished universal app; osx-arm64/ and osx-x64/ are incomplete
   # lipo intermediates (unsigned dylibs, no wwwroot). See CLAUDE.md gotcha 3.
@@ -93,7 +96,9 @@ jobs:
       - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
-          workloads: macos, maui
+
+      - name: Workloads
+        run: dotnet workload install macos maui --version ${{ env.WORKLOAD_VERSION }}
 
       - name: Build
         run: |
@@ -185,7 +190,9 @@ jobs:
       - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
-          workloads: maui-windows
+
+      - name: Workloads
+        run: dotnet workload install maui-windows --version ${{ env.WORKLOAD_VERSION }}
 
       # Publish is fine here - the static-web-asset trap is the macOS bundle's (CLAUDE.md gotcha 3); a Windows
       # publish copies wwwroot/ next to the exe, and the check below holds it to that.
@@ -250,7 +257,9 @@ jobs:
       - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
-          workloads: maui-android
+
+      - name: Workloads
+        run: dotnet workload install maui-android --version ${{ env.WORKLOAD_VERSION }}
 
       # Both architectures from one runner: the app is managed code over GTK, which it loads from the system at run
       # time, and the only natives it carries (libgit2, e_sqlite3) ship linux-x64 and linux-arm64 builds in their

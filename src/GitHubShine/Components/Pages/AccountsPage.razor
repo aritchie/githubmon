@@ -3,6 +3,7 @@
 @inject IConfigStore Config
 @inject ISyncStore SyncStore
 @inject IPersonStore Persons
+@inject ICloneStore Clones
 @inject NavigationManager Nav
 @inject IToastService Toast
 
@@ -99,11 +100,16 @@
         // Likewise the people it followed: without its token there's nothing left to read them with.
         var unfollowed = await Persons.PruneForRemovedAccountAsync(account.Id);
 
+        // And its clone entries — there's no token left to fetch them with. The folders stay on disk.
+        var unlisted = await Clones.PruneForRemovedAccountAsync(account.Id);
+
         var notes = new List<string>();
         if (pruned.Count > 0)
             notes.Add($"{pruned.Count} sync{(pruned.Count == 1 ? "" : "s")}");
         if (unfollowed.Count > 0)
             notes.Add($"{unfollowed.Count} followed {(unfollowed.Count == 1 ? "person" : "people")}");
+        if (unlisted.Count > 0)
+            notes.Add($"{unlisted.Count} clone entr{(unlisted.Count == 1 ? "y" : "ies")}");
 
         var note = notes.Count == 0 ? "" : $" and {string.Join(" and ", notes)}";
         await Toast.SuccessAsync($"Removed {account.Label}{note}");

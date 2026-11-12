@@ -52,7 +52,9 @@ public static class MauiProgram
             .UseMauiApp<App>()
 #endif
 #if !MOBILE
-            .UseTrayIcon()
+            // Shiny.Maui.Controls.Desktop 2.x folded UseTrayIcon() (and the rest of its desktop
+            // features) into this one call; it registers the ITrayIconFactory TrayIconHost uses.
+            .UseShinyDesktop()
 #endif
             .ConfigureFonts(fonts =>
             {
@@ -145,6 +147,7 @@ public static class MauiProgram
                 .Document<SyncMapping>(cfg => cfg.Table = cfg.TypeName)
                 .Document<AutoSyncPrefs>(cfg => cfg.Table = cfg.TypeName)
                 .Document<ClonePrefs>(cfg => cfg.Table = cfg.TypeName)
+                .Document<CloneTarget>(cfg => cfg.Table = cfg.TypeName)
                 .Document<PollState>(cfg => cfg.Table = cfg.TypeName)
                 .Document<FollowedPerson>(cfg => cfg.Table = cfg.TypeName)
                 .Document<UpdatePrefs>(cfg => cfg.Table = cfg.TypeName)

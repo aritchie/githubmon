@@ -1,0 +1,364 @@
+@page "/clone/edit"
+@page "/clone/edit/{Id}"
+@inject ICloneStore Store
+@inject IConfigStore Config
+@inject IGitProviderFactory Factory
+@inject IFileDialogs FileDialogs
+@inject AppPlatformInfo Platform
+@inject NavigationManager Nav
+@inject IToastService Toast
+
+<div class="page narrow">
+    <div class="page-header">
+        <div>
+            <h1>@(Id is null ? "Add working copy" : "Edit working copy")</h1>
+            <span class="subtitle">
+                A repo, the branch to keep it on, and the folder it lives in. Add the same repo again with
+                another branch and folder to have both checked out side by side.
+            </span>
+        </div>
+    </div>
+
+    @if (choices.Count == 0)
+    {
+        <div class="card empty-state">
+            <h2>No repositories to pick from</h2>
+            <p>Add an account and monitor some repositories first.</p>
+            <button class="btn primary" @onclick="@(() => Nav.NavigateTo("/accounts"))">Accounts</button>
+        </div>
+    }
+    else
+    {
+        <div class="card">
+            <div class="field">
+                <label>
+                    Repository
+                    <span class="hint">— every monitored repo, across all accounts</span>
+                </label>
+                <Autocomplete TItem="RepoChoice"
+                              Items="choices"
+                              Value="Selected"
+                              ValueChanged="OnRepoChosen"
+                              ItemText="@(c => c.Repo.FullName)"
+                              ItemDetail="@(c => c.Account.Label)"
+                              Placeholder="Type to search repos…"
+                              EmptyText="No monitored repo matches — add it to an account first" />
+            </div>
+
+            <div class="field">
+                <label>Branch</label>
+                <div class="repo-pick-toolbar">
+                    <input list="clone-edit-branches" style="flex:1;" placeholder="The repository's default branch"
+                           value="@branch" @onchange="OnBranchChanged" />
+                    <button class="btn" @onclick="LoadBranchesAsync" disabled="@(Selected is null || isLoadingBranches)">Load branches</button>
+                    @if (isLoadingBranches)
+                    {
+                        <span class="spinner"></span>
+                    }
+                </div>
+                <datalist id="clone-edit-branches">
+                    @foreach (var name in branches)
+                    {
+                        <option value="@name"></option>
+                    }
+                </datalist>
+                <div class="hint">
+                    Leave blank for the default branch; it's filled in with the real name after the first clone.
+                    @if (Id is not null)
+                    {
+                        <text>
+                            Changing it here doesn't touch the folder straight away — the next run switches the
+                            working copy over, as long as it has no uncommitted changes. The branch picker on the
+                            Clone page switches immediately.
+                        </text>
+                    }
+                </div>
+            </div>
+
+            <div class="field">
+                <label>Folder</label>
+                <div class="repo-pick-toolbar">
+                    <input type="text" style="flex:1;" value="@directory" @onchange="OnDirectoryChanged"
+                           placeholder="owner/repo" spellcheck="false" />
+                    @if (!Platform.IsMobile)
+                    {
+                        <button class="btn" @onclick="BrowseAsync">Browse…</button>
+                    }
+                </div>
+                <div class="hint">
+                    @if (Platform.IsMobile)
+                    {
+                        <text>Relative to this app's storage.</text>
+                    }
+                    else
+                    {
+                        <text>
+                            Relative to the clone folder@(HasRoot ? $" ({Root})" : "") so the setup survives a move
+                            to another machine, or an absolute path for somewhere else entirely.
+                        </text>
+                    }
+                    @if (ResolvedPreview is { } preview)
+                    {
+                        <br /><text>→ @preview</text>
+                    }
+                    @if (Id is not null)
+                    {
+                        <br />
+                        <text>Changing the folder doesn't move an existing working copy — the next run clones afresh into the new one.</text>
+                    }
+                </div>
+            </div>
+        </div>
+
+        <div class="actions-bar">
+            <span class="status">@errorMessage</span>
+            <button class="btn" @onclick="@(() => Nav.NavigateTo("/clone"))">Cancel</button>
+            <button class="btn primary" @onclick="SaveAsync" disabled="@isSaving">Save</button>
+        </div>
+    }
+</div>
+
+@code {
+    /// <summary>One pickable repo: a monitored repo plus the account it's monitored on.</summary>
+    sealed record RepoChoice(MonitoredAccount Account, MonitoredRepo Repo);
+
+    [Parameter] public string? Id { get; set; }
+
+    readonly List<RepoChoice> choices = new();
+    readonly List<string> branches = new();
+
+    ClonePrefs prefs = ClonePrefs.Default;
+    string accountId = "";
+    string repoFullName = "";
+    string branch = "";
+    string directory = "";
+
+    /// <summary>
+    /// Whether the folder has been typed or browsed for. Until it has, picking a repo or branch
+    /// refills it with a fresh suggestion; afterwards the user's choice is left alone.
+    /// </summary>
+    bool directoryEdited;
+
+    bool isLoadingBranches;
+    bool isSaving;
+    string? errorMessage;
+
+    string? Root => Platform.IsMobile ? AppPaths.CloneDirectory : prefs.RootDirectory;
+    bool HasRoot => !string.IsNullOrWhiteSpace(Root);
+
+    RepoChoice? Selected => choices.FirstOrDefault(c =>
+        c.Account.Id == accountId &&
+        string.Equals(c.Repo.FullName, repoFullName, StringComparison.OrdinalIgnoreCase));
+
+    string? ResolvedPreview
+    {
+        get
+        {
+            var dir = directory.Trim();
+            if (dir.Length == 0)
+                return null;
+            if (Path.IsPathRooted(dir))
+                return dir;
+            return HasRoot ? Path.GetFullPath(Path.Combine(Root!, dir)) : null;
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Config.ReloadAsync();
+        await Store.ReloadAsync();
+        prefs = await Store.GetAsync();
+
+        choices.AddRange(Config.Accounts
+            .SelectMany(a => a.Repos.Select(r => new RepoChoice(a, r)))
+            .OrderBy(c => c.Repo.FullName, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(c => c.Account.Label, StringComparer.OrdinalIgnoreCase));
+
+        var existing = Id is null ? null : Store.Targets.FirstOrDefault(t => t.Id == Id);
+        if (existing is not null)
+        {
+            accountId = existing.AccountId;
+            repoFullName = existing.Repo.FullName;
+            branch = existing.Branch ?? "";
+            directory = existing.Directory;
+            directoryEdited = true;
+
+            // An entry for a repo the account has since stopped monitoring still clones fine;
+            // keep it pickable so editing the branch doesn't silently blank the repo.
+            if (Selected is null && Config.Accounts.FirstOrDefault(a => a.Id == accountId) is { } account)
+                choices.Insert(0, new RepoChoice(account, existing.Repo));
+        }
+        else
+        {
+            branch = prefs.InitialBranch ?? "";
+        }
+    }
+
+    void OnRepoChosen(RepoChoice choice)
+    {
+        accountId = choice.Account.Id;
+        repoFullName = choice.Repo.FullName;
+        branches.Clear();
+        Suggest();
+    }
+
+    void OnBranchChanged(ChangeEventArgs e)
+    {
+        branch = e.Value?.ToString()?.Trim() ?? "";
+        Suggest();
+    }
+
+    void OnDirectoryChanged(ChangeEventArgs e)
+    {
+        directory = e.Value?.ToString()?.Trim() ?? "";
+        directoryEdited = directory.Length > 0;
+        if (!directoryEdited)
+            Suggest();
+    }
+
+    void Suggest()
+    {
+        if (directoryEdited || Selected is not { } chosen)
+            return;
+
+        directory = CloneTarget.SuggestDirectory(
+            chosen.Repo, prefs.Layout, NullIfBlank(branch), dir => FindClash(dir) is not null);
+    }
+
+    async Task BrowseAsync()
+    {
+        var folder = await FileDialogs.PickFolderAsync();
+        if (folder is null)
+            return;
+
+        // Kept relative when it's inside the clone folder — that's what lets a restored setup work
+        // on a machine where the clone folder lives somewhere else.
+        if (HasRoot)
+        {
+            var relative = Path.GetRelativePath(Root!, folder);
+            if (!relative.StartsWith("..", StringComparison.Ordinal) && !Path.IsPathRooted(relative) && relative != ".")
+                folder = relative.Replace(Path.DirectorySeparatorChar, '/');
+        }
+
+        directory = folder;
+        directoryEdited = true;
+    }
+
+    async Task LoadBranchesAsync()
+    {
+        if (Selected is not { } chosen)
+            return;
+
+        isLoadingBranches = true;
+        errorMessage = null;
+        try
+        {
+            var provider = await Factory.CreateAsync(chosen.Account);
+            if (provider is null)
+            {
+                errorMessage = $"No access token is saved for {chosen.Account.Label}";
+                return;
+            }
+
+            var fetched = await provider.ListBranchesAsync(chosen.Repo);
+            branches.Clear();
+            branches.AddRange(fetched.OrderBy(n => n, StringComparer.OrdinalIgnoreCase));
+            await Toast.InfoAsync($"{branches.Count} branch{(branches.Count == 1 ? "" : "es")} on {chosen.Repo.FullName}");
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Couldn't list branches: {ex.Message}";
+        }
+        finally
+        {
+            isLoadingBranches = false;
+        }
+    }
+
+    /// <summary>
+    /// Another entry already using <paramref name="dir"/>, compared by the folder it resolves to
+    /// when there's a root to resolve against, and by what was typed when there isn't.
+    /// </summary>
+    CloneTarget? FindClash(string dir)
+    {
+        var mine = Normalise(dir);
+        return Store.Targets.FirstOrDefault(t => t.Id != Id && string.Equals(Normalise(t.Directory), mine, PathComparison));
+    }
+
+    string Normalise(string dir)
+    {
+        dir = dir.Trim().Replace('\\', '/').TrimEnd('/');
+        if (!Path.IsPathRooted(dir) && HasRoot)
+            dir = Path.GetFullPath(Path.Combine(Root!, dir));
+        return dir.Replace('\\', '/').TrimEnd('/');
+    }
+
+    // Windows and (by default) macOS have case-insensitive file systems, where "Docs" and "docs"
+    // are one folder; Linux doesn't.
+    static StringComparison PathComparison => OperatingSystem.IsLinux()
+        ? StringComparison.Ordinal
+        : StringComparison.OrdinalIgnoreCase;
+
+    static string? NullIfBlank(string value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    async Task SaveAsync()
+    {
+        errorMessage = null;
+
+        if (Selected is not { } chosen)
+        {
+            errorMessage = "Pick a repository";
+            return;
+        }
+
+        var dir = directory.Trim();
+        if (dir.Length == 0)
+        {
+            errorMessage = "Enter a folder";
+            return;
+        }
+
+        if (Path.IsPathRooted(dir))
+        {
+            if (Platform.IsMobile)
+            {
+                errorMessage = "Use a folder relative to the app's storage";
+                return;
+            }
+        }
+        else if (dir.Replace('\\', '/').Split('/').Any(part => part == ".."))
+        {
+            errorMessage = "A relative folder can't step outside the clone folder — use an absolute path instead";
+            return;
+        }
+
+        if (FindClash(dir) is { } clash)
+        {
+            errorMessage = $"{clash.Repo.FullName}{(clash.Branch is null ? "" : $" ({clash.Branch})")} already uses that folder";
+            return;
+        }
+
+        isSaving = true;
+        try
+        {
+            var target = new CloneTarget(
+                Id ?? Guid.NewGuid().ToString("n"),
+                chosen.Account.Id,
+                chosen.Repo,
+                NullIfBlank(branch),
+                dir);
+
+            await Store.UpsertAsync(target);
+            await Toast.SuccessAsync($"Saved {chosen.Repo.FullName} → {dir}");
+            Nav.NavigateTo("/clone");
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Save failed: {ex.Message}";
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+}

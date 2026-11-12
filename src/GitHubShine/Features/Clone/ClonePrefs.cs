@@ -1,6 +1,6 @@
 namespace GitHubShine.Clone;
 
-/// <summary>Where a repo lands underneath the chosen root folder.</summary>
+/// <summary>Where a newly added entry's folder is suggested underneath the chosen root folder.</summary>
 public enum CloneLayout
 {
     /// <summary><c>&lt;root&gt;/&lt;owner&gt;/&lt;name&gt;</c> — the default, because two monitored
@@ -24,18 +24,24 @@ public enum CloneLayout
 /// <see cref="AppPaths.CloneDirectory"/> — a path the OS assigns and can move between installs,
 /// which is why it isn't stored here.
 /// </param>
+/// <param name="Layout">The folder suggested for an entry when it's added. Existing entries keep theirs.</param>
 /// <param name="InitialBranch">
-/// The branch a freshly cloned repo is left on. Null (the default) means each repo's own default
-/// branch, and so does a name a given repo doesn't have — a preference for "develop" across the
-/// board shouldn't fail the clone of a repo that never had one. Only ever applies to a first
-/// clone; an existing working copy stays on whatever branch the user put it on.
+/// The branch suggested for an entry when it's added. Null (the default) means each repo's own
+/// default branch. Existing entries keep theirs.
+/// </param>
+/// <param name="TargetsSeeded">
+/// Whether the monitored repos have been turned into <see cref="CloneTarget"/>s once already.
+/// The page used to list every monitored repo implicitly; the first visit since entries became
+/// explicit carries that list over, and this stops it doing so again after the user has pruned
+/// the entries down to the ones they want.
 /// </param>
 public sealed record ClonePrefs(
     string Id,
     string? RootDirectory = null,
     CloneLayout Layout = CloneLayout.OwnerAndName,
     DateTimeOffset? LastRunUtc = null,
-    string? InitialBranch = null)
+    string? InitialBranch = null,
+    bool TargetsSeeded = false)
 {
     public const string DefaultId = "default";
 

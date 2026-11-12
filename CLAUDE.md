@@ -11,7 +11,7 @@ below are hard-won gotchas — read them before touching the build, packaging, o
 
 The desktop backends come from **maui-labs** packages `Microsoft.Maui.Platforms.*`
 (macOS: `.MacOS[.Essentials|.BlazorWebView]`, Linux: `.Linux.Gtk4[.Essentials|.BlazorWebView]`),
-currently `0.1.0-preview.11.26317.2` on nuget.org. Package IDs have flip-flopped historically
+currently `0.1.0-preview.14.26555.2` on nuget.org. Package IDs have flip-flopped historically
 (`Microsoft.Maui.Platforms.*` → `Platform.Maui.*` → back); namespaces track the ID (plural
 `Microsoft.Maui.Platforms.*`). Extension methods and the `MacOSBlazorWebView` control name are
 stable across the renames — only namespaces change.
@@ -107,8 +107,12 @@ builds in its own job on its own OS (TFMs are build-OS conditioned); a final job
 publishes. Full runbook and the list of required secrets: **`docs/RELEASING.md`**.
 
 Things about it that are load-bearing and easy to break:
-- The macOS job runs on the `xcode-27` runner and pins **Xcode 27.1** — the macOS workload's SDK
-  refuses any other Xcode. Bump that path when the workload moves.
+- Every job installs its workloads at the pinned workload set `WORKLOAD_VERSION` (10.0.404, must be
+  in `DOTNET_VERSION`'s band) via `dotnet workload install … --version`, not setup-dotnet's
+  `workloads:` input (which always takes the latest set).
+- The macOS job runs on the `xcode-27` runner and pins **Xcode 27.1** for a known toolchain. The
+  csproj sets `ValidateXcodeVersion=false`, so the workload no longer hard-fails on a different
+  Xcode (locally or in CI). Bump the Xcode path when the workload moves to a new macOS SDK.
 - macOS uses `dotnet build` and takes the TFM-root bundle, per Gotcha 3, and asserts a minimum
   `Contents/Resources` file count, so if a future SDK regresses static-web-asset copying the job
   fails instead of shipping an app with a blank WebView. Windows/Linux use `dotnet publish`

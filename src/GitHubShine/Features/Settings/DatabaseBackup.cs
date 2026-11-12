@@ -6,7 +6,7 @@ namespace GitHubShine.Settings;
 
 public interface IDatabaseBackup
 {
-    /// <summary>Writes a snapshot of every document in the store — accounts, tokens, people, sync mappings, preferences and seen-state.</summary>
+    /// <summary>Writes a snapshot of every document in the store — accounts, tokens, people, sync mappings, clone entries, preferences and seen-state.</summary>
     Task BackupToAsync(string destinationPath, CancellationToken ct = default);
 
     /// <summary>
@@ -40,6 +40,7 @@ public sealed class DocumentDatabaseBackup(
     IGitProviderFactory factory,
     IPersonStore persons,
     ISyncStore sync,
+    ICloneStore clones,
     INotificationPrefsStore notificationPrefs) : IDatabaseBackup
 {
     // Bulk export/import is a capability a provider opts into rather than part of IDocumentStore,
@@ -69,6 +70,7 @@ public sealed class DocumentDatabaseBackup(
         await config.ReloadAsync(ct).ConfigureAwait(false);
         await persons.ReloadAsync(ct).ConfigureAwait(false);
         await sync.ReloadAsync(ct).ConfigureAwait(false);
+        await clones.ReloadAsync(ct).ConfigureAwait(false);
         await notificationPrefs.ReloadAsync(ct).ConfigureAwait(false);
 
         // Restored tokens may differ from any cached clients.

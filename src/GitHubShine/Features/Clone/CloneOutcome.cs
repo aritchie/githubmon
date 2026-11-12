@@ -27,6 +27,9 @@ public enum CloneAction
     /// <summary>The checked-out branch has no matching branch on <c>origin</c>.</summary>
     SkippedNoUpstream,
 
+    /// <summary>The entry's branch exists neither locally nor on a remote, so it couldn't be switched to.</summary>
+    SkippedMissingBranch,
+
     /// <summary>The folder exists but isn't a git working copy.</summary>
     SkippedNotARepo,
 
@@ -43,16 +46,21 @@ public enum CloneAction
 /// <param name="Ahead">Commits on the local branch that the upstream doesn't have.</param>
 /// <param name="Behind">Commits on the upstream that the local branch didn't have before this run.</param>
 /// <param name="Summary">One line, written for a human to read in the UI.</param>
+/// <param name="SwitchedFrom">
+/// The branch (or "a detached HEAD") the working copy was on before this run checked the entry's
+/// branch out, when it had to. <see cref="Action"/> then describes what happened after the switch.
+/// </param>
 public sealed record CloneOutcome(
     CloneAction Action,
     string Path,
     string? Branch,
     int Ahead,
     int Behind,
-    string Summary)
+    string Summary,
+    string? SwitchedFrom = null)
 {
-    /// <summary>True when this run actually wrote commits to disk.</summary>
-    public bool Changed => this.Action is CloneAction.Cloned or CloneAction.Updated;
+    /// <summary>True when this run changed what's on disk — a clone, a fast-forward or a branch switch.</summary>
+    public bool Changed => this.Action is CloneAction.Cloned or CloneAction.Updated || this.SwitchedFrom is not null;
 
     /// <summary>
     /// True when the working copy was deliberately left untouched. These are not failures — each
@@ -63,6 +71,7 @@ public sealed record CloneOutcome(
         or CloneAction.SkippedDiverged
         or CloneAction.SkippedDetached
         or CloneAction.SkippedNoUpstream
+        or CloneAction.SkippedMissingBranch
         or CloneAction.SkippedNotARepo
         or CloneAction.SkippedNoRemote
         or CloneAction.SkippedDifferentRepo;

@@ -782,20 +782,23 @@ input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px;
 .sync-check input:disabled { cursor: default; }
 .sync-check:has(input:disabled) { cursor: default; opacity: .6; }
 
-.sync-row .btn.subtle {
+.sync-row .btn.subtle,
+.clone-row .btn.subtle {
     background: transparent;
     border-color: transparent;
     color: var(--fg-muted);
     padding-inline: 8px;
 }
 
-.sync-row .btn.subtle:hover:not(:disabled) {
+.sync-row .btn.subtle:hover:not(:disabled),
+.clone-row .btn.subtle:hover:not(:disabled) {
     background: var(--bg-hover, rgba(127, 127, 127, .12));
     border-color: var(--border);
     color: inherit;
 }
 
-.sync-row .btn.subtle.danger { color: var(--danger, #d1242f); }
+.sync-row .btn.subtle.danger,
+.clone-row .btn.subtle.danger { color: var(--danger, #d1242f); }
 .sync-row .btn.active { border-color: var(--accent, #0969da); }
 
 .warn-text { color: var(--warning, #d29922); }
@@ -855,6 +858,8 @@ input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px;
 .clone-row .desc { flex: 1 1 auto; min-width: 0; }
 .clone-row .badge { display: flex; align-items: center; gap: 6px; }
 .clone-row .branch-static { font-size: 12px; flex-shrink: 0; }
+.clone-row .clone-actions { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
+.clone-row .clone-actions .btn { padding-block: 1px; font-size: 12px; }
 
 .clone-row select.branch-select {
     width: auto;

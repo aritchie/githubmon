@@ -62,9 +62,14 @@ always increases.
 ### macOS
 
 The job runs on the `xcode-27` runner, pins **Xcode 27.1** and installs the `macos` + `maui`
-workloads from SDK `10.0.4xx` — the same combination ShinyNotch releases with. The workload's
-macOS SDK (27.0.10742) refuses any other Xcode, including the runner's default 27.0 and its 27.2
-beta. When the workload moves to a new macOS SDK, bump the Xcode path in the **Xcode** step.
+workloads from SDK `10.0.4xx` at workload set **`WORKLOAD_VERSION`** (`10.0.404`) — every job
+installs its workloads at that pinned set, so a release can't silently pick up a newer one. Bump
+it deliberately, within `DOTNET_VERSION`'s feature band.
+
+The csproj sets `ValidateXcodeVersion=false`, so the workload no longer refuses an Xcode other
+than the exact one its macOS SDK was cut against (which is what used to break local builds the
+moment Xcode moved ahead). The Xcode step still pins 27.1 so CI builds with a known toolchain;
+bump its path when you move the workload to a new macOS SDK.
 
 `maui` is installed (not just `macos`) because restore evaluates every Apple-host TFM in the
 csproj — `net10.0-ios` and `net10.0-android` too — even for a `-f net10.0-macos` build.

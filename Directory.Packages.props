@@ -1,34 +1,36 @@
 <Project>
     <PropertyGroup>
         <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
-        <ShinyVersion>5.6.3</ShinyVersion>
-        <MauiLabsVersion>0.1.0-preview.12.26421.1</MauiLabsVersion>
-        <ControlsVersion>1.4.0-beta-0011</ControlsVersion>
-        <MauiVersion>10.0.101</MauiVersion>
-        <!-- Shiny.Extensions.* travel together: MauiHosting depends on DependencyInjection at its
-             own exact version, so a lower pin on the direct reference is an NU1605 downgrade. -->
-        <ShinyExtensionsVersion>5.2.1</ShinyExtensionsVersion>
+        <ShinyVersion>6.6.0-beta-0008</ShinyVersion>
+        <MauiLabsVersion>0.1.0-preview.14.26555.2</MauiLabsVersion>
+        <ControlsVersion>2.5.0-beta-0008</ControlsVersion>
+        <MauiVersion>10.0.130</MauiVersion>
+        <!-- Shiny 6 needs Shiny.Extensions.DependencyInjection/Stores 6.x; keep the direct pins at or
+             above what it asks for, or restore fails with an NU1605 downgrade. MauiHosting is on its
+             own (5.x) release line and only asks for DependencyInjection >= 5.3.1. -->
+        <ShinyExtensionsVersion>6.0.1</ShinyExtensionsVersion>
+        <ShinyMauiHostingVersion>5.3.1</ShinyMauiHostingVersion>
     </PropertyGroup>
     <ItemGroup>
         <PackageVersion Include="Microsoft.Maui.Controls" Version="$(MauiVersion)"/>
         <PackageVersion Include="Microsoft.AspNetCore.Components.WebView.Maui" Version="$(MauiVersion)"/>
-        <PackageVersion Include="Microsoft.Extensions.Logging.Debug" Version="10.0.12"/>
-        <PackageVersion Include="Microsoft.Extensions.Logging.Console" Version="10.0.12"/>
+        <PackageVersion Include="Microsoft.Extensions.Logging.Debug" Version="10.0.15"/>
+        <PackageVersion Include="Microsoft.Extensions.Logging.Console" Version="10.0.15"/>
         <PackageVersion Include="Shiny.Hosting.Maui" Version="$(ShinyVersion)"/>
         <PackageVersion Include="Shiny.Notifications" Version="$(ShinyVersion)"/>
         <PackageVersion Include="Shiny.Notifications.Linux" Version="$(ShinyVersion)"/>
         <PackageVersion Include="Shiny.Jobs" Version="$(ShinyVersion)"/>
-        <PackageVersion Include="Shiny.Core.Linux" Version="$(ShinyVersion)"/>
-        <PackageVersion Include="Shiny.DocumentDb.Sqlite" Version="13.5.0"/>
+        <PackageVersion Include="Shiny.DocumentDb.Sqlite" Version="14.2.0"/>
+        <!-- Referenced directly (DatabaseBackup uses SqliteConnection) and pinned above what
+             DocumentDb asks for: 10.0.7 drags in SQLitePCLRaw 2.1.11, which is flagged by
+             GHSA-2m69-gcr7-jv3q (NU1903); 10.0.15 brings 2.1.13. -->
+        <PackageVersion Include="Microsoft.Data.Sqlite" Version="10.0.15"/>
         <PackageVersion Include="Shiny.Extensions.Stores" Version="$(ShinyExtensionsVersion)"/>
         <PackageVersion Include="Shiny.Extensions.DependencyInjection" Version="$(ShinyExtensionsVersion)"/>
-        <!-- IStartupService (launch at login) for the desktop heads. Ships a net10.0-macos asset,
-             so the labs AppKit head is covered; the GTK head takes the plain net10.0 one, which
-             carries the XDG autostart implementation. -->
-        <PackageVersion Include="Shiny.Extensions.MauiHosting" Version="$(ShinyExtensionsVersion)"/>
+        <PackageVersion Include="Shiny.Extensions.MauiHosting" Version="$(ShinyMauiHostingVersion)"/>
         <PackageVersion Include="Shiny.Maui.Controls.Desktop" Version="$(ControlsVersion)"/>
         <PackageVersion Include="Shiny.Blazor.Controls" Version="$(ControlsVersion)"/>
-        <PackageVersion Include="Shiny.Mediator.Maui" Version="6.8.0"/>
+        <PackageVersion Include="Shiny.Mediator.Maui" Version="6.13.0-beta-0001"/>
         <PackageVersion Include="Microsoft.Maui.Platforms.MacOS" Version="$(MauiLabsVersion)"/>
         <PackageVersion Include="Microsoft.Maui.Platforms.MacOS.Essentials" Version="$(MauiLabsVersion)"/>
         <PackageVersion Include="Microsoft.Maui.Platforms.MacOS.BlazorWebView" Version="$(MauiLabsVersion)"/>

@@ -8,17 +8,21 @@
 @inject SnapshotCache Cache
 @inject IToastService Toast
 @inject AppPlatformInfo Platform
+@inject NavigationManager Nav
 
 <div class="page narrow">
     <div class="page-header">
         <div>
             <h1>Clone</h1>
             <span class="subtitle">
-                Keep local working copies of the repos you monitor. A repo that isn't in the folder yet
-                is cloned; one that's already there is fast-forwarded on whatever branch it's currently
-                on — unless it has uncommitted changes, in which case it's left alone.
+                Keep local working copies of your repos — each one a repo, a branch and a folder, so a
+                wiped machine is one run away from its old layout. A folder that's missing is cloned; one
+                that's there is put on its branch and fast-forwarded — unless it has uncommitted changes
+                or unpushed commits, in which case it's left alone.
             </span>
         </div>
+        <span class="spacer"></span>
+        <button class="btn primary" @onclick="@(() => Nav.NavigateTo("/clone/edit"))" disabled="@IsLocked">+ Add</button>
     </div>
 
     @if (gitMissing)
@@ -55,33 +59,19 @@
         </div>
 
         <div class="field">
-            <label>Folder layout</label>
+            <label>Folder for new entries</label>
             <select value="@prefs.Layout" @onchange="OnLayoutChangedAsync" disabled="@IsLocked">
                 <option value="@CloneLayout.OwnerAndName">Group by owner — &lt;folder&gt;/owner/repo</option>
                 <option value="@CloneLayout.NameOnly">Flat — &lt;folder&gt;/repo</option>
             </select>
             <div class="hint">
-                @if (prefs.Layout == CloneLayout.NameOnly)
-                {
-                    <text>
-                        Flat is tidier until two accounts monitor a repo of the same name — then they'd
-                        share one folder. A folder whose <code>origin</code> is a different repo is
-                        reported and skipped rather than fetched into.
-                    </text>
-                }
-                else
-                {
-                    <text>Each owner gets its own subfolder, so repos of the same name never collide.</text>
-                }
-                @if (HasRoot && rows.Count > 0)
-                {
-                    <text> Example: @Engine.ResolvePath(Root!, rows[0].Repo, prefs.Layout)</text>
-                }
+                Only suggests where a newly added repo goes — every entry keeps its own folder, which you
+                can change with Edit. Relative folders follow the clone folder if you move it.
             </div>
         </div>
 
         <div class="field">
-            <label>Initial branch for new clones</label>
+            <label>Branch for new entries</label>
             <input list="clone-branch-suggestions" placeholder="Each repository's default branch"
                    value="@prefs.InitialBranch" @onchange="OnInitialBranchChangedAsync" disabled="@IsLocked" />
             <datalist id="clone-branch-suggestions">
@@ -91,9 +81,8 @@
                 }
             </datalist>
             <div class="hint">
-                Only applies the first time a repo is cloned — one that's already here stays on the branch
-                it's on, which you can change per repo below. A repo with no branch of this name is cloned
-                on its own default instead.
+                Suggested when a repo is added; each entry's branch can be changed below. A repo with no
+                branch of this name is cloned on its own default instead.
             </div>
         </div>
     </div>
@@ -101,8 +90,17 @@
     @if (rows.Count == 0)
     {
         <div class="card empty-state">
-            <h2>No repositories to clone</h2>
-            <p>Add an account and monitor some repositories first.</p>
+            <h2>No working copies yet</h2>
+            @if (UnlistedRepos.Count > 0)
+            {
+                <p>Add every repo you monitor in one go, or pick them one at a time.</p>
+                <button class="btn primary" @onclick="AddMonitoredAsync">Add @UnlistedRepos.Count monitored repo@(UnlistedRepos.Count == 1 ? "" : "s")</button>
+                <button class="btn" @onclick="@(() => Nav.NavigateTo("/clone/edit"))">+ Add one</button>
+            }
+            else
+            {
+                <p>Add an account and monitor some repositories first.</p>
+            }
         </div>
     }
     else
@@ -129,6 +127,13 @@
                 <button class="btn" @onclick="SelectOutOfDate" disabled="@(IsLocked || OutOfDateCount == 0)">
                     Select out of date@(OutOfDateCount > 0 ? $" ({OutOfDateCount})" : "")
                 </button>
+                @if (UnlistedRepos.Count > 0)
+                {
+                    <button class="btn" @onclick="AddMonitoredAsync" disabled="@IsLocked"
+                            title="Add an entry for every monitored repo that doesn't have one yet">
+                        + @UnlistedRepos.Count monitored
+                    </button>
+                }
                 <span class="spacer" style="flex:1;"></span>
                 @if (isBusy || isScanning)
                 {
@@ -137,7 +142,7 @@
                 }
                 else
                 {
-                    <button class="btn" @onclick="() => ScanAsync(fetchRemote: true)" disabled="@(!HasRoot || gitMissing)"
+                    <button class="btn" @onclick="() => ScanAsync(fetchRemote: true)" disabled="@(gitMissing)"
                             title="Fetch every repo and recount how far behind each branch is. Changes nothing on disk.">
                         Check for updates
                     </button>
@@ -194,12 +199,16 @@
                 }
                 @foreach (var row in Filtered)
                 {
-                    <div class="repo-pick-row clone-row" @key="row.Key">
+                    <div class="repo-pick-row clone-row" @key="row.Target.Id">
                         <div class="clone-main">
                             <label class="clone-pick">
                                 <input type="checkbox" checked="@row.Selected" disabled="@IsLocked"
                                        @onchange="e => row.Selected = (bool)e.Value!" />
                                 <span class="name">@row.Repo.FullName</span>
+                                @if (row.Duplicated)
+                                {
+                                    <span class="muted" style="font-size:12px;">@(row.Target.Branch ?? "default")</span>
+                                }
                             </label>
                             @* Visibility comes off the poller's cached snapshot — this page never calls
                                the API itself, so it stays blank until a poll has landed. *@
@@ -236,11 +245,26 @@
                                     }
                                 </select>
                             }
-                            else if (row.Status is { Kind: CloneStatusKind.NotCloned })
+                            else
                             {
-                                <span class="muted branch-static">→ @(prefs.InitialBranch ?? "default branch")</span>
+                                <span class="muted branch-static">→ @(row.Target.Branch ?? "default branch")</span>
                             }
                             <span class="desc" title="@RowTitle(row)">@RowDetail(row)</span>
+                            <span class="clone-actions">
+                                <button class="btn subtle" @onclick="@(() => Nav.NavigateTo($"/clone/edit/{row.Target.Id}"))"
+                                        disabled="@(IsLocked || row.Busy)">Edit</button>
+                                @if (pendingDeleteId == row.Target.Id)
+                                {
+                                    <button class="btn subtle danger" @onclick="() => RemoveAsync(row)"
+                                            title="Removes the entry only — the folder and everything in it stay on disk">Confirm remove</button>
+                                    <button class="btn subtle" @onclick="() => pendingDeleteId = null">Cancel</button>
+                                }
+                                else
+                                {
+                                    <button class="btn subtle danger" @onclick="() => pendingDeleteId = row.Target.Id"
+                                            disabled="@(IsLocked || row.Busy)">Remove</button>
+                                }
+                            </span>
                         </div>
                     </div>
                 }
@@ -263,13 +287,17 @@
 @code {
     enum RunState { Idle, Running, Done, Failed }
 
-    sealed class CloneRow(MonitoredAccount account, MonitoredRepo repo)
+    sealed class CloneRow(CloneTarget target, MonitoredAccount account)
     {
         int revision;
 
-        public MonitoredAccount Account { get; } = account;
-        public MonitoredRepo Repo { get; } = repo;
-        public string Key => $"{this.Account.Id}|{this.Repo.FullName}";
+        /// <summary>The saved entry. Replaced (not mutated) when the store reloads or the row is edited.</summary>
+        public CloneTarget Target { get; set; } = target;
+        public MonitoredAccount Account { get; set; } = account;
+        public MonitoredRepo Repo => this.Target.Repo;
+
+        /// <summary>The same repo has more than one entry, so the name alone doesn't say which this is.</summary>
+        public bool Duplicated { get; set; }
         public bool Selected { get; set; } = true;
         public RunState State { get; set; }
 
@@ -294,7 +322,7 @@
         /// re-rendering the same bound value doesn't move it back, so a switch that was refused
         /// would leave the picker showing a branch the repo isn't on. A new key rebuilds it.
         /// </summary>
-        public string BranchSelectKey => $"{this.Key}|{this.revision}";
+        public string BranchSelectKey => $"{this.Target.Id}|{this.revision}";
 
         public void SetStatus(CloneStatus? status)
         {
@@ -310,6 +338,7 @@
     readonly List<string> log = new();
 
     ClonePrefs prefs = ClonePrefs.Default;
+    string? pendingDeleteId;
     string filterText = "";
     string accountFilter = "";
     bool isBusy;
@@ -339,7 +368,7 @@
     bool IsLocked => isBusy || isScanning;
 
     int SelectedCount => rows.Count(r => r.Selected);
-    int OutOfDateCount => Filtered.Count(r => r.Status is { NeedsUpdate: true });
+    int OutOfDateCount => Filtered.Count(NeedsRun);
 
     bool IsFiltered => !string.IsNullOrWhiteSpace(filterText) || !string.IsNullOrEmpty(accountFilter);
 
@@ -377,11 +406,40 @@
         .Distinct(StringComparer.Ordinal)
         .OrderBy(n => n, StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>Monitored repos with no entry here yet — what the "+ N monitored" button adds.</summary>
+    List<(MonitoredAccount Account, MonitoredRepo Repo)> UnlistedRepos
+    {
+        get
+        {
+            var listed = Store.Targets
+                .Select(t => $"{t.AccountId}|{t.Repo.FullName}")
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            return Config.Accounts
+                .SelectMany(a => a.Repos.Select(r => (Account: a, Repo: r)))
+                .Where(x => !listed.Contains($"{x.Account.Id}|{x.Repo.FullName}"))
+                .ToList();
+        }
+    }
+
     protected override async Task OnInitializedAsync()
     {
         Config.Changed += OnConfigChanged;
+        Store.Changed += OnConfigChanged;
         await Config.ReloadAsync();
+        await Store.ReloadAsync();
         prefs = await Store.GetAsync();
+
+        // This page used to list every monitored repo without being asked. The first visit since
+        // entries became explicit turns that list into entries, so nothing disappears on upgrade —
+        // once only, so removing entries later isn't undone on the next visit.
+        if (!prefs.TargetsSeeded && Store.Targets.Count == 0 && UnlistedRepos.Count > 0)
+        {
+            await AddMonitoredAsync();
+            prefs = prefs with { TargetsSeeded = true };
+            await Store.SaveAsync(prefs);
+        }
+
         Rebuild();
 
         try
@@ -400,7 +458,7 @@
         // Not gated on firstRender: an async OnInitializedAsync renders once before it has finished,
         // so the first render can arrive with no prefs and no rows and there'd be nothing to scan.
         // This waits for the render that has them, and the flag keeps it to one pass.
-        if (initialScanDone || !HasRoot || gitMissing || rows.Count == 0)
+        if (initialScanDone || gitMissing || rows.Count == 0)
             return;
 
         // The local read is fast and touches nothing, so the page arrives already showing which
@@ -412,34 +470,111 @@
 
     void Rebuild()
     {
-        // Preserve selections (and any results already on screen) across config refreshes.
-        var existing = rows.ToDictionary(r => r.Key, StringComparer.OrdinalIgnoreCase);
+        // Preserve selections (and any results already on screen) across refreshes. A row whose
+        // folder or repo was edited describes somewhere else now, so it starts over.
+        var existing = rows.ToDictionary(r => r.Target.Id, StringComparer.Ordinal);
+        var accounts = Config.Accounts.ToDictionary(a => a.Id, StringComparer.Ordinal);
         var rebuilt = new List<CloneRow>();
 
-        foreach (var account in Config.Accounts)
-            foreach (var repo in account.Repos)
-                rebuilt.Add(existing.TryGetValue($"{account.Id}|{repo.FullName}", out var row)
-                    ? row
-                    : new CloneRow(account, repo));
+        foreach (var target in Store.Targets)
+        {
+            // An entry whose account is gone has no token to clone with; deleting an account
+            // prunes its entries, so this is only ever a moment's race.
+            if (!accounts.TryGetValue(target.AccountId, out var account))
+                continue;
+
+            if (existing.TryGetValue(target.Id, out var row) &&
+                row.Target.Directory == target.Directory &&
+                row.Target.Repo == target.Repo)
+            {
+                row.Target = target;
+                row.Account = account;
+            }
+            else
+            {
+                row = new CloneRow(target, account);
+            }
+
+            rebuilt.Add(row);
+        }
+
+        var counts = rebuilt
+            .GroupBy(r => $"{r.Account.Id}|{r.Repo.FullName}", StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.Count(), StringComparer.OrdinalIgnoreCase);
+        foreach (var row in rebuilt)
+            row.Duplicated = counts[$"{row.Account.Id}|{row.Repo.FullName}"] > 1;
 
         rebuilt.Sort((a, b) =>
         {
             var byRepo = string.Compare(a.Repo.FullName, b.Repo.FullName, StringComparison.OrdinalIgnoreCase);
-            return byRepo != 0 ? byRepo : string.Compare(a.Account.Label, b.Account.Label, StringComparison.OrdinalIgnoreCase);
+            if (byRepo != 0)
+                return byRepo;
+            var byAccount = string.Compare(a.Account.Label, b.Account.Label, StringComparison.OrdinalIgnoreCase);
+            return byAccount != 0
+                ? byAccount
+                : string.Compare(a.Target.Directory, b.Target.Directory, StringComparison.OrdinalIgnoreCase);
         });
 
         rows.Clear();
         rows.AddRange(rebuilt);
     }
 
-    void OnConfigChanged(object? sender, EventArgs e)
-        => _ = InvokeAsync(() =>
+    /// <summary>Where this row's working copy lives, or null while there's no clone folder to resolve it against.</summary>
+    string? PathOf(CloneRow row)
+    {
+        try
         {
-            if (!IsLocked)
-            {
-                Rebuild();
-                StateHasChanged();
-            }
+            return row.Target.ResolvePath(Root);
+        }
+        catch (InvalidOperationException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Adds an entry for every monitored repo that doesn't have one, in the folder the layout
+    /// suggests and on the default branch for new entries.
+    /// </summary>
+    async Task AddMonitoredAsync()
+    {
+        var taken = Store.Targets
+            .Select(t => t.Directory.Replace('\\', '/'))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var added = new List<CloneTarget>();
+        foreach (var (account, repo) in UnlistedRepos)
+        {
+            var dir = CloneTarget.SuggestDirectory(repo, prefs.Layout, prefs.InitialBranch, taken.Contains);
+            taken.Add(dir);
+            added.Add(new CloneTarget(Guid.NewGuid().ToString("n"), account.Id, repo, prefs.InitialBranch, dir));
+        }
+
+        await Store.UpsertManyAsync(added);
+        if (added.Count > 0)
+            await Toast.SuccessAsync($"Added {added.Count} working cop{(added.Count == 1 ? "y" : "ies")}");
+    }
+
+    async Task RemoveAsync(CloneRow row)
+    {
+        pendingDeleteId = null;
+        await Store.RemoveAsync(row.Target.Id);
+        await Toast.SuccessAsync($"Removed {row.Repo.FullName} from the list — {PathOf(row) ?? row.Target.Directory} is still on disk");
+    }
+
+    void OnConfigChanged(object? sender, EventArgs e)
+        => _ = InvokeAsync(async () =>
+        {
+            if (IsLocked)
+                return;
+
+            Rebuild();
+            StateHasChanged();
+
+            // New entries (and ones whose folder moved) have no status yet; read them so they
+            // don't sit there blank. Local only, so it's instant and spends nothing.
+            if (initialScanDone && rows.Any(r => r.Status is null && r.StatusError is null))
+                await ScanAsync(fetchRemote: false, onlyUnread: true);
         });
 
     /// <summary>What the row's second line says: the result of a run, else what's on disk.</summary>
@@ -453,19 +588,14 @@
             return error;
         if (row.Status is { } status)
             return status.Detail;
-        if (!HasRoot)
-            return row.Account.Label;
-        return $"{row.Account.Label} · {Engine.ResolvePath(Root!, row.Repo, prefs.Layout)}";
+        return $"{row.Account.Label} · {PathOf(row) ?? row.Target.Directory}";
     }
 
     /// <summary>The destination path, which the second line rarely has room to spell out.</summary>
     string RowTitle(CloneRow row)
     {
         var detail = RowDetail(row);
-        if (!HasRoot)
-            return detail;
-
-        var path = row.Status?.Path ?? Engine.ResolvePath(Root!, row.Repo, prefs.Layout);
+        var path = row.Status?.Path ?? PathOf(row) ?? row.Target.Directory;
         return $"{row.Account.Label} · {path}\n{detail}";
     }
 
@@ -520,6 +650,12 @@
                 break;
         }
 
+        if (status.IsWorkingCopy && row.Target.Branch is { } wanted &&
+            !string.Equals(status.Branch, wanted, StringComparison.Ordinal))
+            yield return ($"Not on {wanted}", PillType.Warning,
+                $"This entry is set to {wanted}, but the folder is on {status.Branch ?? "a detached HEAD"}. " +
+                "A run switches it back if there are no uncommitted changes.");
+
         if (status.Behind > 0)
             yield return ($"{status.Behind} behind", PillType.Warning, status.Detail);
 
@@ -554,7 +690,14 @@
     /// Rows the filter is hiding keep whatever they were — untangling that from a filtered view
     /// would be worse than the hint that reports how many are still ticked out of sight.
     /// </summary>
-    void SelectOutOfDate() => Filtered.ForEach(r => r.Selected = r.Status is { NeedsUpdate: true });
+    void SelectOutOfDate() => Filtered.ForEach(r => r.Selected = NeedsRun(r));
+
+    /// <summary>Not cloned, behind, or sitting on a branch other than the entry's.</summary>
+    static bool NeedsRun(CloneRow row)
+        => row.Status is { } status &&
+           (status.NeedsUpdate ||
+            (status.IsWorkingCopy && row.Target.Branch is { } wanted &&
+             !string.Equals(status.Branch, wanted, StringComparison.Ordinal)));
 
     async Task ChooseFolderAsync()
     {
@@ -580,7 +723,6 @@
 
         prefs = prefs with { Layout = layout };
         await Store.SaveAsync(prefs);
-        await RescanAfterDestinationChangeAsync();
     }
 
     async Task OnInitialBranchChangedAsync(ChangeEventArgs e)
@@ -612,23 +754,30 @@
     /// does on arrival; <paramref name="fetchRemote"/> contacts each remote so the behind counts
     /// are current. Either way nothing on disk is changed.
     /// </summary>
-    async Task ScanAsync(bool fetchRemote)
+    async Task ScanAsync(bool fetchRemote, bool onlyUnread = false)
     {
-        if (IsLocked || gitMissing || !HasRoot || rows.Count == 0)
+        if (IsLocked || gitMissing || rows.Count == 0)
             return;
 
-        var root = Root!;
+        // Entries with an absolute folder can be read without a clone folder; the rest wait for one.
+        var targets = rows
+            .Where(r => PathOf(r) is not null)
+            .Where(r => !onlyUnread || (r.Status is null && r.StatusError is null))
+            .ToList();
+        if (targets.Count == 0)
+            return;
+
         cts = new CancellationTokenSource();
         isScanning = true;
         scanDone = 0;
-        scanTotal = rows.Count;
+        scanTotal = targets.Count;
         StateHasChanged();
 
         try
         {
             // Sequential for the same reason the run is: a fetching scan is one network round-trip
             // per repo, and running them all at once only contends for the same connection.
-            foreach (var row in rows)
+            foreach (var row in targets)
             {
                 cts.Token.ThrowIfCancellationRequested();
                 row.Busy = true;
@@ -637,7 +786,7 @@
                 try
                 {
                     row.SetStatus(await Engine.GetStatusAsync(
-                        row.Account, row.Repo, root, prefs.Layout, fetchRemote, null, cts.Token));
+                        row.Account, row.Repo, PathOf(row)!, fetchRemote, null, cts.Token));
                     row.StatusError = null;
                 }
                 catch (OperationCanceledException)
@@ -656,7 +805,8 @@
                 StateHasChanged();
             }
 
-            lastScanFetched = fetchRemote;
+            if (!onlyUnread)
+                lastScanFetched = fetchRemote;
         }
         catch (OperationCanceledException)
         {
@@ -693,8 +843,12 @@
         try
         {
             row.SetStatus(await Engine.SwitchBranchAsync(
-                row.Account, row.Repo, Root!, prefs.Layout, branch!));
+                row.Account, row.Repo, PathOf(row)!, branch!));
             row.StatusError = null;
+
+            // The picker is how the entry's branch is changed, not just a one-off checkout — a
+            // run would otherwise switch the folder straight back to the old one.
+            await SaveBranchAsync(row, branch!);
 
             await Toast.SuccessAsync($"{row.Repo.FullName} is now on {branch}");
         }
@@ -711,7 +865,7 @@
             try
             {
                 row.SetStatus(await Engine.GetStatusAsync(
-                    row.Account, row.Repo, Root!, prefs.Layout, fetchRemote: false));
+                    row.Account, row.Repo, PathOf(row)!, fetchRemote: false));
                 row.StatusError = null;
             }
             catch (Exception readEx)
@@ -735,14 +889,13 @@
 
         // First run of all: no folder has been picked yet, so ask for one rather than making the
         // user find the Choose button first. Never reached on mobile, where Root is always set.
-        if (!HasRoot && !Platform.IsMobile)
+        if (!HasRoot && !Platform.IsMobile && targets.Any(r => PathOf(r) is null))
         {
             await ChooseFolderAsync();
             if (!HasRoot)
                 return;
         }
 
-        var root = Root!;
         cts = new CancellationTokenSource();
         isBusy = true;
         doneCount = 0;
@@ -780,9 +933,14 @@
                 try
                 {
                     var outcome = await Engine.CloneOrUpdateAsync(
-                        row.Account, row.Repo, root, prefs.Layout, prefs.InitialBranch, progress, cts.Token);
+                        row.Account, row.Repo, PathOf(row)!, row.Target.Branch, progress, cts.Token);
 
                     row.Outcome = outcome;
+
+                    // An entry left on "the default branch" learns what that is from its first
+                    // clone, so it stays put even if the repo's default later moves.
+                    if (row.Target.Branch is null && outcome.Action == CloneAction.Cloned && outcome.Branch is { } cloned)
+                        await SaveBranchAsync(row, cloned);
                     row.State = RunState.Done;
 
                     if (outcome.Changed)
@@ -839,13 +997,25 @@
         await ScanAsync(fetchRemote: false);
     }
 
+    /// <summary>Records a new branch on the row's entry without disturbing the rest of the page.</summary>
+    async Task SaveBranchAsync(CloneRow row, string branch)
+    {
+        if (string.Equals(row.Target.Branch, branch, StringComparison.Ordinal))
+            return;
+
+        // The reload this triggers is ignored mid-run (the page is locked), and otherwise keeps
+        // this row as it is: same folder, same repo.
+        row.Target = row.Target with { Branch = branch };
+        await Store.UpsertAsync(row.Target);
+    }
+
     string Summarise(int changed, int skipped, int failures)
     {
         var upToDate = doneCount - changed - skipped - failures;
         var parts = new List<string>();
 
         if (changed > 0)
-            parts.Add($"{changed} cloned or updated");
+            parts.Add($"{changed} cloned, switched or updated");
         if (upToDate > 0)
             parts.Add($"{upToDate} already up to date");
         if (skipped > 0)
@@ -859,6 +1029,7 @@
     public void Dispose()
     {
         Config.Changed -= OnConfigChanged;
+        Store.Changed -= OnConfigChanged;
         cts?.Cancel();
         cts?.Dispose();
     }

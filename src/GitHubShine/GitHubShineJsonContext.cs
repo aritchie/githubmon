@@ -17,6 +17,7 @@ namespace GitHubShine;
 [JsonSerializable(typeof(SyncMapping))]
 [JsonSerializable(typeof(AutoSyncPrefs))]
 [JsonSerializable(typeof(ClonePrefs))]
+[JsonSerializable(typeof(CloneTarget))]
 [JsonSerializable(typeof(PollState))]
 [JsonSerializable(typeof(FollowedPerson))]
 [JsonSerializable(typeof(UpdatePrefs))]
