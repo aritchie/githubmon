@@ -107,12 +107,18 @@ builds in its own job on its own OS (TFMs are build-OS conditioned); a final job
 publishes. Full runbook and the list of required secrets: **`docs/RELEASING.md`**.
 
 Things about it that are load-bearing and easy to break:
-- Every job installs its workloads at the pinned workload set `WORKLOAD_VERSION` (10.0.404, must be
-  in `DOTNET_VERSION`'s band) via `dotnet workload install … --version`, not setup-dotnet's
+- The SDK is pinned by **`global.json`** (10.0.404, latestPatch); setup-dotnet reads it. Don't remove
+  it: runners (and dev machines) also have the .NET 11 SDK, and without the pin `dotnet` uses that,
+  so workloads land in the wrong band and builds use the wrong platform packs.
+- Every job installs its workloads at the pinned workload set `WORKLOAD_VERSION` (10.0.404, same
+  band as `global.json`) via `dotnet workload install … --version`, not setup-dotnet's
   `workloads:` input (which always takes the latest set).
-- The macOS job runs on the `xcode-27` runner and pins **Xcode 27.1** for a known toolchain. The
-  csproj sets `ValidateXcodeVersion=false`, so the workload no longer hard-fails on a different
-  Xcode (locally or in CI). Bump the Xcode path when the workload moves to a new macOS SDK.
+- The macOS job runs on the `xcode-27` runner and pins **Xcode 27.2** — workload set 10.0.404's
+  macOS SDK pack (27.2.x) needs it. `ValidateXcodeVersion=false` in the csproj only skips the
+  up-front check; the trimmer still fails (`MT0179`) on an older Xcode. Bump the Xcode path when
+  the workload moves to a new macOS SDK.
+- iOS 27 SDK builds require the UIScene lifecycle (`Platforms/iOS/SceneDelegate.cs` + the
+  `UIApplicationSceneManifest` in `Info.plist`); without it the build fails with `MT7199`.
 - macOS uses `dotnet build` and takes the TFM-root bundle, per Gotcha 3, and asserts a minimum
   `Contents/Resources` file count, so if a future SDK regresses static-web-asset copying the job
   fails instead of shipping an app with a blank WebView. Windows/Linux use `dotnet publish`
