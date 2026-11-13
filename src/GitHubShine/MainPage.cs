@@ -27,10 +27,20 @@ public class MainPage : ContentPage
         // The labs handler installs its titlebar drag overlay once the webview
         // lands in a window; patch it shortly after so the window buttons work.
         // Second pass covers slow window setup. Idempotent either way.
+        // WebViewContentFixer undoes the zero-size web content view that blanks the window.
         Loaded += (_, _) =>
         {
-            Dispatcher.DispatchDelayed(TimeSpan.FromMilliseconds(300), GitHubShine.Platforms.MacOS.TitlebarOverlayFixer.Apply);
-            Dispatcher.DispatchDelayed(TimeSpan.FromSeconds(2), GitHubShine.Platforms.MacOS.TitlebarOverlayFixer.Apply);
+            GitHubShine.Platforms.MacOS.WebViewContentFixer.Apply();
+            Dispatcher.DispatchDelayed(TimeSpan.FromMilliseconds(300), () =>
+            {
+                GitHubShine.Platforms.MacOS.TitlebarOverlayFixer.Apply();
+                GitHubShine.Platforms.MacOS.WebViewContentFixer.Apply();
+            });
+            Dispatcher.DispatchDelayed(TimeSpan.FromSeconds(2), () =>
+            {
+                GitHubShine.Platforms.MacOS.TitlebarOverlayFixer.Apply();
+                GitHubShine.Platforms.MacOS.WebViewContentFixer.Apply();
+            });
         };
 #else
         var webView = new BlazorWebView { HostPage = "wwwroot/index.html" };
