@@ -5,13 +5,13 @@ experimental **maui-labs** backends (net-macos AppKit / GTK4), not Mac Catalyst.
 below are hard-won gotchas — read them before touching the build, packaging, or macOS deploy.
 
 ## Target frameworks (per build OS)
-- **macOS host:** `net10.0-macos;net10.0-ios;net10.0-android`
-- **Linux host:** `net10.0` (GTK4 backend, `_IsLinux`)
-- **Windows host:** `net10.0-windows10.0.19041.0`
+- **macOS host:** `net11.0-macos;net11.0-ios;net11.0-android`
+- **Linux host:** `net11.0` (GTK4 backend, `_IsLinux`)
+- **Windows host:** `net11.0-windows10.0.19041.0`
 
 The desktop backends come from **maui-labs** packages `Microsoft.Maui.Platforms.*`
 (macOS: `.MacOS[.Essentials|.BlazorWebView]`, Linux: `.Linux.Gtk4[.Essentials|.BlazorWebView]`),
-currently `0.1.0-preview.14.26555.2` on nuget.org. Package IDs have flip-flopped historically
+currently `0.1.0-preview.15.26574.3` on nuget.org. Package IDs have flip-flopped historically
 (`Microsoft.Maui.Platforms.*` → `Platform.Maui.*` → back); namespaces track the ID (plural
 `Microsoft.Maui.Platforms.*`). Extension methods and the `MacOSBlazorWebView` control name are
 stable across the renames — only namespaces change.
@@ -20,7 +20,7 @@ stable across the renames — only namespaces change.
 
 ## Gotcha 1 — MAUI SingleProject strips `Platforms/MacOS` and `Platforms/Linux` from Compile
 **Symptom:** `CS5001` "Program does not contain a static 'Main'" plus `CS0234`/`CS0103` that
-`GitHubShine.Platforms.MacOS.*` "does not exist", when building `net10.0-macos` / Linux.
+`GitHubShine.Platforms.MacOS.*` "does not exist", when building `net11.0-macos` / Linux.
 
 **Cause:** `Microsoft.Maui.Controls.SingleProject.targets` stamps
 `ExcludeFromCurrentConfiguration=true` on everything under `Platforms/**` via a `<Compile Update>`
@@ -44,8 +44,8 @@ bare name `Platforms`. **Always fully-qualify the app's own platform code** as
 ---
 
 ## Gotcha 3 — macOS Release: deploy the UNIVERSAL bundle, never the per-RID subfolder
-**This is the #1 macOS deploy footgun.** A multi-RID `net10.0-macos` Release build emits THREE
-`.app`s under `bin/Release/net10.0-macos/`:
+**This is the #1 macOS deploy footgun.** A multi-RID `net11.0-macos` Release build emits THREE
+`.app`s under `bin/Release/net11.0-macos/`:
 
 | Path | Use it? |
 |------|---------|
@@ -62,20 +62,20 @@ Only the **root universal bundle** is fully assembled. The per-RID subfolders ar
    `_content/Shiny.Blazor.Controls/*`, css). Blazor then renders components in-process (logs look
    fine) but the WebView is blank/unstyled.
 
-The root universal bundle from a plain `dotnet build -c Release -f net10.0-macos` has **all assets
+The root universal bundle from a plain `dotnet build -c Release -f net11.0-macos` has **all assets
 AND validly ad-hoc-signed dylibs** — no `publish`, no manual re-signing needed.
 **Do NOT use `dotnet publish` to "fix signing" — it strips the static web assets down to ~2 files too.**
 
 ### Deploy recipe (macOS)
 ```bash
-dotnet build src/GitHubShine/GitHubShine.csproj -c Release -f net10.0-macos
-cp -R "src/GitHubShine/bin/Release/net10.0-macos/GitHub Shine.app" ~/Desktop/   # root, NOT osx-arm64/
+dotnet build src/GitHubShine/GitHubShine.csproj -c Release -f net11.0-macos
+cp -R "src/GitHubShine/bin/Release/net11.0-macos/GitHub Shine.app" ~/Desktop/   # root, NOT osx-arm64/
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f ~/Desktop/"GitHub Shine.app"
 ```
 
 ### Verify a macOS bundle is healthy
 ```bash
-find "<app>/Contents/Resources" -type f | wc -l                 # expect ~33, NOT 2
+find "<app>/Contents/Resources" -type f | wc -l                 # expect ~78, NOT 2
 codesign -dvv "<app>/Contents/MonoBundle/libcoreclr.dylib"      # want flags=0x2(adhoc); 0x10000(runtime)=broken intermediate
 codesign --verify --deep --verbose=2 "<app>"                    # want "valid on disk"
 ```
@@ -90,7 +90,7 @@ LaunchServices icon cache is stale from repeated redeploys — fix with `lsregis
 
 ## Debug vs Release (macOS) quick reference
 - **Debug** (`dotnet build -c Debug`) produces a single, complete, ad-hoc-signed bundle at
-  `bin/Debug/net10.0-macos/osx-arm64/GitHub Shine.app` — good for local testing.
+  `bin/Debug/net11.0-macos/osx-arm64/GitHub Shine.app` — good for local testing.
 - **Release** — always take the **universal** bundle at the TFM root (Gotcha 3).
 - To capture a startup crash: run the inner binary directly
   (`"<app>/Contents/MacOS/GitHubShine"`) and read stdout; a code-signing kill produces no stdout —
@@ -107,13 +107,13 @@ builds in its own job on its own OS (TFMs are build-OS conditioned); a final job
 publishes. Full runbook and the list of required secrets: **`docs/RELEASING.md`**.
 
 Things about it that are load-bearing and easy to break:
-- The SDK is pinned by **`global.json`** (10.0.404, latestPatch); setup-dotnet reads it. Don't remove
-  it: runners (and dev machines) also have the .NET 11 SDK, and without the pin `dotnet` uses that,
+- The SDK is pinned by **`global.json`** (11.0.100, latestPatch); setup-dotnet reads it. Don't remove
+  it: runners (and dev machines) carry several .NET SDKs, and without the pin `dotnet` uses the newest,
   so workloads land in the wrong band and builds use the wrong platform packs.
-- Every job installs its workloads at the pinned workload set `WORKLOAD_VERSION` (10.0.404, same
+- Every job installs its workloads at the pinned workload set `WORKLOAD_VERSION` (11.0.100.1, same
   band as `global.json`) via `dotnet workload install … --version`, not setup-dotnet's
   `workloads:` input (which always takes the latest set).
-- The macOS job runs on the `xcode-27` runner and pins **Xcode 27.2** — workload set 10.0.404's
+- The macOS job runs on the `xcode-27` runner and pins **Xcode 27.2** — workload set 11.0.100.1's
   macOS SDK pack (27.2.x) needs it. `ValidateXcodeVersion=false` in the csproj only skips the
   up-front check; the trimmer still fails (`MT0179`) on an older Xcode. Bump the Xcode path when
   the workload moves to a new macOS SDK.
@@ -132,7 +132,7 @@ Things about it that are load-bearing and easy to break:
   assembly attributes and nothing maps `ApplicationDisplayVersion` onto them (WinUI.targets does
   that on Windows), so without it the app reports 1.0.0.
 - The Linux job installs the `maui-android` workload only because `UseMaui=true` needs
-  `Microsoft.Maui.Sdk.net10`, and that's the workload that carries it and installs on Linux.
+  `Microsoft.Maui.Sdk.net11`, and that's the workload that carries it and installs on Linux.
 - Installers live in `eng/installers/` (`windows/GitHubShine.iss`, `linux/nfpm.yaml` + `.desktop`).
   The Inno `AppId` GUID must never change, and its uninstall cleans the HKCU Run value named
   `GitHubShine` — the `StartupServiceOptions.Identifier` in `MauiProgram.cs`; keep them in step.

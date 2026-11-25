@@ -91,5 +91,5 @@ Choices worth knowing about:
   before the bundle is sealed.
 
 **If the iOS app crashes on launch in `ObjCRuntime.Class.ResolveTokenReference`** after a package
-or native change, it's stale registrar state, not your code: delete `obj/Debug/net10.0-ios` and
-`bin/Debug/net10.0-ios` and rebuild.
+or native change, it's stale registrar state, not your code: delete `obj/Debug/net11.0-ios` and
+`bin/Debug/net11.0-ios` and rebuild.

@@ -62,21 +62,21 @@ always increases.
 ### macOS
 
 The job runs on the `xcode-27` runner, pins **Xcode 27.2** and installs the `macos` + `maui`
-workloads at workload set **`WORKLOAD_VERSION`** (`10.0.404`) on the SDK pinned by the repo's
-**`global.json`** (`10.0.404`, latest patch). Every job installs its workloads at that pinned set,
+workloads at workload set **`WORKLOAD_VERSION`** (`11.0.100.1`) on the SDK pinned by the repo's
+**`global.json`** (`11.0.100`, latest patch). Every job installs its workloads at that pinned set,
 so a release can't silently pick up a newer one. Bump both deliberately, in the same feature band.
 
-The `global.json` pin is load-bearing: the runner images also carry the .NET 11 SDK, and without
+The `global.json` pin is load-bearing: the runner images carry several .NET SDKs, and without
 it `dotnet` uses the newest SDK — workloads then install against the wrong band (the Linux job
 fails outright) and builds use that SDK's platform packs.
 
-Workload set 10.0.404's macOS SDK pack (27.2.10000) needs **Xcode 27.2**. The csproj sets
+Workload set 11.0.100.1's macOS SDK pack (27.2.11039) needs **Xcode 27.2**. The csproj sets
 `ValidateXcodeVersion=false`, which skips the up-front exact-version check, but the trimmer still
 fails (`MT0179`) against an older Xcode — so bump the Xcode path whenever `WORKLOAD_VERSION`
 moves the macOS SDK.
 
 `maui` is installed (not just `macos`) because restore evaluates every Apple-host TFM in the
-csproj — `net10.0-ios` and `net10.0-android` too — even for a `-f net10.0-macos` build.
+csproj — `net11.0-ios` and `net11.0-android` too — even for a `-f net11.0-macos` build.
 
 ### Windows
 
@@ -89,9 +89,9 @@ build on the x64 runner — `LibGit2Sharp.NativeBinaries` ships `win-arm64` nati
 ### Linux
 
 `ubuntu-24.04` with the `maui-android` workload — not because anything Android is built, but
-because `UseMaui=true` makes the SDK import `Microsoft.Maui.Sdk.net10` even for the plain
-`net10.0` GTK head, and `maui-android` is the workload that carries it and installs on Linux.
-`dotnet publish -f net10.0` self-contained once per `linux-x64` / `linux-arm64` (managed code
+because `UseMaui=true` makes the SDK import `Microsoft.Maui.Sdk.net11` even for the plain
+`net11.0` GTK head, and `maui-android` is the workload that carries it and installs on Linux.
+`dotnet publish -f net11.0` self-contained once per `linux-x64` / `linux-arm64` (managed code
 over system GTK; libgit2 and e_sqlite3 ship natives for both), then [nfpm](https://nfpm.goreleaser.com)
 (pinned by `NFPM_VERSION`, checksum-verified) turns each into a `.deb` and an `.rpm` from
 `eng/installers/linux/nfpm.yaml`.
@@ -171,8 +171,8 @@ Finally `eng/ci/notarize.sh` submits the DMG, waits, and staples. On rejection i
 The scripts are standalone, so you can rehearse the whole thing without CI:
 
 ```bash
-dotnet build src/GitHubShine/GitHubShine.csproj -c Release -f net10.0-macos
-APP="src/GitHubShine/bin/Release/net10.0-macos/GitHub Shine.app"
+dotnet build src/GitHubShine/GitHubShine.csproj -c Release -f net11.0-macos
+APP="src/GitHubShine/bin/Release/net11.0-macos/GitHub Shine.app"
 
 eng/ci/sign-macos-app.sh "$APP" "Developer ID Application: Your Name (TEAMID)"
 eng/ci/make-dmg.sh "$APP" artifacts/GitHubShine.dmg "Developer ID Application: Your Name (TEAMID)"
@@ -219,12 +219,12 @@ just points at a binary that is gone, which desktop sessions skip.
 
 ### Rehearsing the Linux packaging on a Mac
 
-The csproj only offers `net10.0` on a Linux host, but global properties override that, so the
+The csproj only offers `net11.0` on a Linux host, but global properties override that, so the
 Linux publish cross-builds from macOS:
 
 ```bash
 dotnet publish src/GitHubShine/GitHubShine.csproj -c Release \
-  -p:TargetFrameworks=net10.0 -p:TargetFramework=net10.0 -p:_IsLinux=true \
+  -p:TargetFrameworks=net11.0 -p:TargetFramework=net11.0 -p:_IsLinux=true \
   -r linux-x64 --self-contained -p:Version=1.2.3 -o publish/linux-x64
 VERSION=1.2.3 ARCH=amd64 PUBLISH_DIR=publish/linux-x64 envsubst < eng/installers/linux/nfpm.yaml > /tmp/nfpm.yaml
 nfpm package -f /tmp/nfpm.yaml -p deb -t artifacts/

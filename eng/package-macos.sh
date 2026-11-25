@@ -21,7 +21,7 @@ PROJECT="$REPO_ROOT/src/GitHubShine/GitHubShine.csproj"
 APP_NAME="GitHub Shine.app"
 EXE_NAME="GitHubShine"
 ENTITLEMENTS="$REPO_ROOT/eng/macos-resign.entitlements"
-TFM="net10.0-macos"
+TFM="net11.0-macos"
 
 DEST="$HOME/Desktop"
 DO_BUILD=1

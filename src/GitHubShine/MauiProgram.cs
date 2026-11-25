@@ -21,17 +21,6 @@ using Microsoft.Maui.Platforms.Linux.Gtk4.BlazorWebView;
 using Microsoft.Maui.Platforms.Linux.Gtk4.Essentials.Hosting;
 using Microsoft.Maui.Platforms.Linux.Gtk4.Hosting;
 #endif
-#if DEBUG
-// DevFlow's GTK build exposes the same two extension methods under .Gtk namespaces, so only the
-// usings differ per head — the call site below is shared.
-#if LINUX
-using Microsoft.Maui.DevFlow.Agent.Gtk;
-using Microsoft.Maui.DevFlow.Blazor.Gtk;
-#else
-using Microsoft.Maui.DevFlow.Agent;
-using Microsoft.Maui.DevFlow.Blazor;
-#endif
-#endif
 
 namespace GitHubShine;
 
@@ -102,9 +91,8 @@ public static class MauiProgram
 
         // Shiny's platform services — IPlatform and the concrete per-head platform type that
         // Shiny's own JobManager takes — come from Shiny itself rather than being hand-registered
-        // here. On the heads Shiny.Hosting.Maui supports, UseShiny() is the entry point; the labs
-        // macOS/Linux heads aren't MAUI heads it knows about (its only non-platform asset is an
-        // empty net10.0 one), so they call Shiny.Core's registration directly.
+        // here. On iOS/Android/Windows UseShiny() is the entry point; the labs macOS/Linux heads
+        // don't reference Shiny.Hosting.Maui, so they call Shiny.Core's registration directly.
 #if ANDROID || IOS || WINDOWS
         builder.UseShiny();
 #else
@@ -179,7 +167,7 @@ public static class MauiProgram
         // JobManager constructor-injects IBattery and IConnectivity (it evaluates the
         // WithInternet/WithBatteryNotLow constraints before each run). On iOS/Android the
         // platform-specific Shiny.Jobs build registers them itself, but the desktop heads resolve
-        // Shiny.Jobs' plain net10.0 fallback, which compiles against Shiny.Core's net10.0 asset —
+        // Shiny.Jobs' plain net11.0 fallback, which compiles against Shiny.Core's net11.0 asset —
         // and that asset declares only the interfaces, so its AddJob has no implementations to
         // wire up. Register them per-head, exactly as with Shiny.IPlatform above.
         // Symptom when missing: "Unable to resolve service for type 'Shiny.Power.IBattery' while
@@ -258,12 +246,6 @@ public static class MauiProgram
         builder.Logging.AddDebug();
         builder.Logging.AddConsole();
         builder.Logging.SetMinimumLevel(LogLevel.Debug);
-
-        // MAUI DevFlow — in-app agent the `maui devflow` CLI drives for visual-tree inspection,
-        // taps and screenshots, plus the Blazor tools that reach the WebView contents over CDP.
-        // Debug-only by design: it opens a local HTTP server for the CLI to connect to.
-        builder.AddMauiDevFlowAgent();
-        builder.AddMauiBlazorDevFlowTools();
 #endif
 
         var app = builder.Build();

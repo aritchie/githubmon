@@ -1,36 +1,36 @@
 <Project>
     <PropertyGroup>
         <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
-        <ShinyVersion>6.6.0-beta-0008</ShinyVersion>
-        <MauiLabsVersion>0.1.0-preview.14.26555.2</MauiLabsVersion>
-        <ControlsVersion>2.5.0-beta-0008</ControlsVersion>
-        <MauiVersion>10.0.130</MauiVersion>
-        <!-- Shiny 6 needs Shiny.Extensions.DependencyInjection/Stores 6.x; keep the direct pins at or
+        <ShinyVersion>7.1.0</ShinyVersion>
+        <MauiLabsVersion>0.1.0-preview.15.26574.3</MauiLabsVersion>
+        <ControlsVersion>3.0.0</ControlsVersion>
+        <MauiVersion>11.0.10</MauiVersion>
+        <!-- Shiny 7 needs Shiny.Extensions.DependencyInjection/Stores 6.x; keep the direct pins at or
              above what it asks for, or restore fails with an NU1605 downgrade. MauiHosting is on its
              own (5.x) release line and only asks for DependencyInjection >= 5.3.1. -->
-        <ShinyExtensionsVersion>6.0.1</ShinyExtensionsVersion>
+        <ShinyExtensionsVersion>6.0.2</ShinyExtensionsVersion>
         <ShinyMauiHostingVersion>5.3.1</ShinyMauiHostingVersion>
     </PropertyGroup>
     <ItemGroup>
         <PackageVersion Include="Microsoft.Maui.Controls" Version="$(MauiVersion)"/>
         <PackageVersion Include="Microsoft.AspNetCore.Components.WebView.Maui" Version="$(MauiVersion)"/>
-        <PackageVersion Include="Microsoft.Extensions.Logging.Debug" Version="10.0.15"/>
-        <PackageVersion Include="Microsoft.Extensions.Logging.Console" Version="10.0.15"/>
+        <PackageVersion Include="Microsoft.Extensions.Logging.Debug" Version="11.0.0"/>
+        <PackageVersion Include="Microsoft.Extensions.Logging.Console" Version="11.0.0"/>
         <PackageVersion Include="Shiny.Hosting.Maui" Version="$(ShinyVersion)"/>
         <PackageVersion Include="Shiny.Notifications" Version="$(ShinyVersion)"/>
         <PackageVersion Include="Shiny.Notifications.Linux" Version="$(ShinyVersion)"/>
         <PackageVersion Include="Shiny.Jobs" Version="$(ShinyVersion)"/>
-        <PackageVersion Include="Shiny.DocumentDb.Sqlite" Version="14.2.0"/>
+        <PackageVersion Include="Shiny.DocumentDb.Sqlite" Version="14.4.1"/>
         <!-- Referenced directly (DatabaseBackup uses SqliteConnection) and pinned above what
              DocumentDb asks for: 10.0.7 drags in SQLitePCLRaw 2.1.11, which is flagged by
-             GHSA-2m69-gcr7-jv3q (NU1903); 10.0.15 brings 2.1.13. -->
-        <PackageVersion Include="Microsoft.Data.Sqlite" Version="10.0.15"/>
+             GHSA-2m69-gcr7-jv3q (NU1903); 10.0.15 and later bring 2.1.13+. -->
+        <PackageVersion Include="Microsoft.Data.Sqlite" Version="11.0.0"/>
         <PackageVersion Include="Shiny.Extensions.Stores" Version="$(ShinyExtensionsVersion)"/>
         <PackageVersion Include="Shiny.Extensions.DependencyInjection" Version="$(ShinyExtensionsVersion)"/>
         <PackageVersion Include="Shiny.Extensions.MauiHosting" Version="$(ShinyMauiHostingVersion)"/>
         <PackageVersion Include="Shiny.Maui.Controls.Desktop" Version="$(ControlsVersion)"/>
         <PackageVersion Include="Shiny.Blazor.Controls" Version="$(ControlsVersion)"/>
-        <PackageVersion Include="Shiny.Mediator.Maui" Version="6.13.0-beta-0001"/>
+        <PackageVersion Include="Shiny.Mediator.Maui" Version="6.13.0"/>
         <PackageVersion Include="Microsoft.Maui.Platforms.MacOS" Version="$(MauiLabsVersion)"/>
         <PackageVersion Include="Microsoft.Maui.Platforms.MacOS.Essentials" Version="$(MauiLabsVersion)"/>
         <PackageVersion Include="Microsoft.Maui.Platforms.MacOS.BlazorWebView" Version="$(MauiLabsVersion)"/>
@@ -46,11 +46,5 @@
         <!-- Referenced explicitly only so the mobile heads can exclude it — see GitHubShine.csproj.
              The version is pinned by LibGit2Sharp itself ([2.0.324]) and must match it exactly. -->
         <PackageVersion Include="LibGit2Sharp.NativeBinaries" Version="2.0.324"/>
-        <!-- MAUI DevFlow ships in lockstep with the labs platform packages, so it rides the same
-             version property. The .Gtk pair is the Linux/GTK4 flavour of the same two libraries. -->
-        <PackageVersion Include="Microsoft.Maui.DevFlow.Agent" Version="$(MauiLabsVersion)"/>
-        <PackageVersion Include="Microsoft.Maui.DevFlow.Blazor" Version="$(MauiLabsVersion)"/>
-        <PackageVersion Include="Microsoft.Maui.DevFlow.Agent.Gtk" Version="$(MauiLabsVersion)"/>
-        <PackageVersion Include="Microsoft.Maui.DevFlow.Blazor.Gtk" Version="$(MauiLabsVersion)"/>
     </ItemGroup>
 </Project>

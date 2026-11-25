@@ -6,6 +6,13 @@
         <LangVersion>latest</LangVersion>
         <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
         <Nullable>enable</Nullable>
+
+        <!-- The labs GTK4 package (preview.15+) globs Resources/Images|Fonts|Raw into MauiImage/
+             MauiFont/MauiAsset from its buildTransitive props unless this is false. The csproj
+             already declares those items itself, so the Linux head would get every image twice and
+             Resizetizer fails with "duplicate file names … dotnet_bot". It has to be set here, not in
+             the csproj: package props are imported before the project body, after this file. -->
+        <EnableDefaultMauiResourceItems>false</EnableDefaultMauiResourceItems>
     </PropertyGroup>
 
     <!--

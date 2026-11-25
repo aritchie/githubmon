@@ -145,7 +145,6 @@ The app has seven tabs: **Dashboard**, **People**, **Accounts**, **Archive**, **
 | [Shiny.Extensions.Stores](https://www.nuget.org/packages/Shiny.Extensions.Stores) | Key/value settings stores |
 | [Shiny.Extensions.DependencyInjection](https://www.nuget.org/packages/Shiny.Extensions.DependencyInjection) | Source-generated DI registration |
 | [Shiny.Extensions.MauiHosting](https://www.nuget.org/packages/Shiny.Extensions.MauiHosting) | Launch-at-login and app-support services |
-| [Microsoft.Maui.DevFlow](https://github.com/dotnet/maui-labs) | UI inspection and automation (Debug builds only) |
 
 ## Install
 
@@ -165,7 +164,7 @@ Releases are cut by tagging; see [docs/RELEASING.md](docs/RELEASING.md).
 
 ### Prerequisites
 
-- [.NET 10 SDK](https://dotnet.microsoft.com/download)
+- [.NET 11 SDK](https://dotnet.microsoft.com/download)
 - The `maui` workload: `dotnet workload install maui`
 - A personal access token for each account you want to monitor, with read access to its repositories. This is a [fine-grained PAT](https://github.com/settings/tokens?type=beta) on GitHub, or an access token from your Gitea / Forgejo user settings. Sync also needs write access on the destination account.
 

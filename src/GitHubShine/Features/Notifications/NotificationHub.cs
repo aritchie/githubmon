@@ -30,10 +30,8 @@ public interface INotificationHub
 /// Two things were wrong before, and this type fixes both:
 ///
 /// 1. <b>Nothing registered <see cref="IPlatform"/>.</b> Shiny's NotificationManager takes an
-///    IPlatform, normally supplied by Shiny.Hosting.Maui's UseShiny(). That package ships no
-///    net10.0-macos asset, so on this app's macOS head it would resolve its platform-less net10.0
-///    build and register nothing at all. MauiProgram now registers the per-head platform type
-///    directly. Without it, resolving INotificationManager threw
+///    IPlatform, normally supplied by Shiny.Hosting.Maui's UseShiny(), which the labs macOS/Linux
+///    heads don't use. MauiProgram registers the per-head platform type directly there. Without it, resolving INotificationManager threw
 ///    "Unable to resolve service for type 'Shiny.IPlatform'".
 ///
 /// 2. <b>Nothing requested authorization.</b> Every Apple head routes through

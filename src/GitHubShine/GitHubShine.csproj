@@ -1,9 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk.Razor">
 
 	<PropertyGroup>
-		<TargetFrameworks Condition="$([MSBuild]::IsOSPlatform('osx'))">net10.0-macos;net10.0-ios;net10.0-android</TargetFrameworks>
-		<TargetFramework Condition="$([MSBuild]::IsOSPlatform('linux'))">net10.0</TargetFramework>
-		<TargetFramework Condition="$([MSBuild]::IsOSPlatform('windows'))">net10.0-windows10.0.19041.0</TargetFramework>
+		<TargetFrameworks Condition="$([MSBuild]::IsOSPlatform('osx'))">net11.0-macos;net11.0-ios;net11.0-android</TargetFrameworks>
+		<TargetFramework Condition="$([MSBuild]::IsOSPlatform('linux'))">net11.0</TargetFramework>
+		<TargetFramework Condition="$([MSBuild]::IsOSPlatform('windows'))">net11.0-windows10.0.19041.0</TargetFramework>
 
 		<OutputType>Exe</OutputType>
 		<RootNamespace>GitHubShine</RootNamespace>
@@ -25,7 +25,7 @@
 		<TargetPlatformMinVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">10.0.17763.0</TargetPlatformMinVersion>
 
 		<_IsMobile Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'ios' OR $([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">true</_IsMobile>
-		<_IsLinux Condition="$(TargetFramework) == 'net10.0' AND $([MSBuild]::IsOSPlatform('linux'))">true</_IsLinux>
+		<_IsLinux Condition="$(TargetFramework) == 'net11.0' AND $([MSBuild]::IsOSPlatform('linux'))">true</_IsLinux>
 
 		<!-- The Apple workloads refuse to build unless Xcode is the exact version their SDK was cut
 		     against, which breaks the moment a machine's Xcode moves ahead of the installed workload.
@@ -127,8 +127,8 @@
 		<PackageReference Include="Shiny.Mediator.Maui" />
 		<PackageReference Include="Shiny.Notifications" />
 		<!-- Background scheduling. On iOS/Android this binds the native schedulers
-		     (BGTaskScheduler / WorkManager); the desktop heads have no net10.0-macos or
-		     net10.0-windows asset and fall back to lib/net10.0, which is Shiny's in-process
+		     (BGTaskScheduler / WorkManager); the desktop heads have no net11.0-macos or
+		     net11.0-windows asset and fall back to lib/net11.0, which is Shiny's in-process
 		     timer-driven JobManager — the same thing the hand-rolled loops used to be. -->
 		<PackageReference Include="Shiny.Jobs" />
 		<PackageReference Include="Shiny.Blazor.Controls" />
@@ -152,39 +152,12 @@
 		<PackageReference Include="Shiny.Extensions.MauiHosting"/>
 	</ItemGroup>
 
-	<!-- Shiny's MAUI host (UseShiny). Only referenced on the heads it actually supports — its
-	     net10.0 asset is empty, so the labs macOS/Linux heads call AddShinyCoreServices instead. -->
+	<!-- Shiny's MAUI host (UseShiny). Only referenced on the heads this app wires it up on — the
+	     labs macOS/Linux heads call AddShinyCoreServices instead (see MauiProgram). -->
 	<ItemGroup Condition="'$(_IsMobile)' == 'true' Or $(TargetFramework.Contains('windows'))">
 		<PackageReference Include="Shiny.Hosting.Maui" />
 	</ItemGroup>
 
-	<!-- MAUI DevFlow: the CLI's in-app agent, plus the Blazor tools that expose the WebView over
-	     CDP (this app's UI is entirely Blazor, so without the second package the tree stops at the
-	     WebView).
-	     The base packages ship android/ios/maccatalyst/macos/windows assets — including
-	     net10.0-macos, so the labs AppKit head is covered — while the GTK4 Linux head (plain
-	     net10.0) needs the .Gtk pair instead.
-
-	     DEBUG-ONLY. Every call site is inside #if DEBUG (MauiProgram registration and, for the
-	     GTK head, App.OnStart), so in Release the assemblies were pure dead weight shipped to
-	     users — and the agent opens a local HTTP server, which is not something a distributed
-	     build should carry at all. $(Configuration) == 'Debug' is the same switch the SDK uses
-	     to define the DEBUG symbol, so the references track the #if exactly; if a custom
-	     configuration ever defines DEBUG, update this condition to match.
-
-	     Cost of the split: obj/project.assets.json is per-project, not per-configuration, so
-	     alternating `build -c Debug` and `build -c Release` re-restores each time. That is a few
-	     seconds from the local NuGet cache, and CI only ever builds Release. -->
-	<ItemGroup Condition="'$(Configuration)' == 'Debug' AND '$(_IsLinux)' != 'true'">
-		<PackageReference Include="Microsoft.Maui.DevFlow.Agent" />
-		<PackageReference Include="Microsoft.Maui.DevFlow.Blazor" />
-	</ItemGroup>
-
-	<ItemGroup Condition="'$(Configuration)' == 'Debug' AND '$(_IsLinux)' == 'true'">
-		<PackageReference Include="Microsoft.Maui.DevFlow.Agent.Gtk" />
-		<PackageReference Include="Microsoft.Maui.DevFlow.Blazor.Gtk" />
-	</ItemGroup>
-	
 	<ItemGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'macos'">
 		<PackageReference Include="Microsoft.Maui.Platforms.MacOS" />
 		<PackageReference Include="Microsoft.Maui.Platforms.MacOS.Essentials" />
@@ -196,7 +169,7 @@
 		<PackageReference Include="Microsoft.Maui.Platforms.Linux.Gtk4.Essentials" />
 		<PackageReference Include="Microsoft.Maui.Platforms.Linux.Gtk4.BlazorWebView" />
 		<PackageReference Include="Shiny.Notifications.Linux" />
-		<!-- No Shiny.Core.Linux any more: since Shiny 6, Shiny.Core's own net10.0 asset carries the
+		<!-- No Shiny.Core.Linux any more: since Shiny 6, Shiny.Core's own net11.0 asset carries the
 		     Linux IBattery/IConnectivity implementations the job manager needs. -->
 	</ItemGroup>
 
