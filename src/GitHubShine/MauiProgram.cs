@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using Shiny;
 using Shiny.Blazor.Controls.Toast;
@@ -87,7 +88,11 @@ public static class MauiProgram
 #else
         builder.Services.AddSingleton(new AppPlatformInfo(IsMobile: false));
 #endif
-        builder.Services.AddSingleton(Browser.Default);
+        // Fallback only. The labs macOS/Linux Essentials register their own IBrowser; on those
+        // heads Browser.Default comes from the plain net11.0 reference assembly and throws
+        // NotImplementedInReferenceAssemblyException, which kills the Blazor renderer (frozen UI).
+        // AddSingleton would win over the labs registration, so this must be TryAdd.
+        builder.Services.TryAddSingleton(Browser.Default);
 
         // Shiny's platform services — IPlatform and the concrete per-head platform type that
         // Shiny's own JobManager takes — come from Shiny itself rather than being hand-registered

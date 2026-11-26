@@ -1,3 +1,4 @@
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.JSInterop;
 
 namespace GitHubShine;
@@ -12,6 +13,6 @@ public static class ExternalLinks
     [JSInvokable]
     public static Task OpenExternalLink(string url)
         => Uri.TryCreate(url, UriKind.Absolute, out var uri) && (uri.Scheme == Uri.UriSchemeHttps || uri.Scheme == Uri.UriSchemeHttp)
-            ? Browser.Default.OpenAsync(uri, BrowserLaunchMode.External)
+            ? IPlatformApplication.Current!.Services.GetRequiredService<IBrowser>().OpenAsync(uri, BrowserLaunchMode.External)
             : Task.CompletedTask;
 }
